@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Abdul Razak Catering — the house mark.
+
+    A covered serving dome on its plate, inside an octagonal ring. The dome is
+    the one object every catering customer already reads as "food arriving at a
+    table", and it survives being shrunk to a browser tab in a way a monogram
+    with two letters does not. The octagon is the formal frame the printed slip
+    and the sidebar both wear; it is dropped below 64px (see mark-glyph.svg),
+    where a 1px ring dissolves into a smudge.
+  -->
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A6841C"/>
+      <stop offset="0.42" stop-color="#F0D67B"/>
+      <stop offset="1" stop-color="#C9A227"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Octagonal ring -->
+  <polygon
+    points="474.1,165.7 346.3,37.9 165.7,37.9 37.9,165.7 37.9,346.3 165.7,474.1 346.3,474.1 474.1,346.3"
+    fill="none" stroke="url(#gold)" stroke-width="11" stroke-linejoin="round"/>
+
+  <!-- Steam: three wisps rising off the finial -->
+  <g fill="none" stroke="url(#gold)" stroke-width="9" stroke-linecap="round" opacity="0.85">
+    <path d="M206 194c-11-15 9-24 0-39-8-13 4-20 0-29"/>
+    <path d="M256 184c-13-18 11-28 0-47-9-15 5-24 0-35"/>
+    <path d="M306 194c-11-15 9-24 0-39-8-13 4-20 0-29"/>
+  </g>
+
+  <!-- Finial -->
+  <circle cx="256" cy="222" r="16" fill="url(#gold)"/>
+  <rect x="249" y="228" width="14" height="18" rx="7" fill="url(#gold)"/>
+
+  <!-- Dome -->
+  <path d="M130 354a126 126 0 0 1 252 0Z" fill="url(#gold)"/>
+
+  <!-- Plate -->
+  <rect x="112" y="364" width="288" height="24" rx="12" fill="url(#gold)"/>
+</svg>

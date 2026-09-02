@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+.env.local
+.env
+*.log
+.DS_Store
+next-env.d.ts
+.vercel
+cpanel-build
+cpanel-build.zip
+
+# Client-supplied photography originals: kept out of the build, they are huge
+media-source
+photos-source

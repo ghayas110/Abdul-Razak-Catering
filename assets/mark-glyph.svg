@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    The same dome without the octagon and with the steam clipped short, drawn
+    to fill the tile. This is what the favicon and the small launcher icons are
+    cut from: at 16px the ring and the tall wisps average out to a dark blur,
+    and what survives is the dome silhouette, which is the recognisable half of
+    the mark anyway.
+  -->
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B8931F"/>
+      <stop offset="0.42" stop-color="#F4DE93"/>
+      <stop offset="1" stop-color="#C9A227"/>
+    </linearGradient>
+  </defs>
+
+  <g fill="none" stroke="url(#gold)" stroke-width="17" stroke-linecap="round">
+    <path d="M186 128c-14-18 11-29 0-48"/>
+    <path d="M326 128c-14-18 11-29 0-48"/>
+  </g>
+
+  <circle cx="256" cy="112" r="26" fill="url(#gold)"/>
+  <rect x="245" y="122" width="22" height="30" rx="11" fill="url(#gold)"/>
+  <path d="M42 372a214 214 0 0 1 428 0Z" fill="url(#gold)"/>
+  <rect x="20" y="388" width="472" height="42" rx="21" fill="url(#gold)"/>
+</svg>
