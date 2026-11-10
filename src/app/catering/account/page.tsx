@@ -8,7 +8,7 @@ import { getMyDevices, getAllDevices } from '@/lib/actions/devices';
 import { DevicesCard } from '@/components/devices-card';
 import { PushCard } from '@/components/push-card';
 
-export const metadata = { title: 'My Account — Abdul Razak Catering' };
+export const metadata = { title: 'My Account — Abdul Razzak Catering' };
 
 export default async function AccountPage() {
   const user = await requireUser();

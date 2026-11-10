@@ -1,7 +1,7 @@
 import { BrandLockup } from '@/components/brand';
 import Link from 'next/link';
 
-export const metadata = { title: 'Offline — Abdul Razak Catering' };
+export const metadata = { title: 'Offline — Abdul Razzak Catering' };
 
 // Static fallback served by the service worker when a navigation fails.
 // Must not touch the database — it has to render with no network at all.
@@ -11,7 +11,7 @@ export default function OfflinePage() {
       <BrandLockup />
       <h1 className="mt-8 font-display text-3xl text-[rgb(var(--text))]">You&apos;re offline</h1>
       <p className="mt-2 max-w-sm text-sm text-[rgb(var(--text-muted))]">
-        Abdul Razak Catering Service needs a connection to load bookings and payments. Check your
+        Abdul Razzak Catering needs a connection to load bookings and payments. Check your
         internet and try again.
       </p>
       <Link

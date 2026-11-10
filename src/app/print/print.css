@@ -21,6 +21,24 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+/*
+ * On a phone the toolbar used to overflow the screen edge, and the first
+ * thing to disappear off it was Print — the one control the whole screen
+ * exists for. Back and Print now share the top row, and the zoom cluster
+ * drops underneath where there is room for it.
+ */
+@media (max-width: 640px) {
+  .rgb-backdrop { padding: 12px 8px 72px; }
+  .rgb-toolbar { gap: 8px; }
+  .rgb-toolbar > .rgb-btn { order: 1; }
+  .rgb-zoom { order: 3; width: 100%; justify-content: center; }
+  .rgb-toolbar .rgb-btn-gold { order: 2; margin-left: auto; }
+  /* Comfortable finger targets: 44px is the smallest Apple considers usable. */
+  .rgb-btn { padding: 11px 14px; min-height: 44px; }
+  .rgb-zoom .rgb-btn { min-width: 44px; justify-content: center; }
 }
 .rgb-btn {
   display: inline-flex; align-items: center; gap: 8px;
@@ -35,11 +53,22 @@
 /* ── Preview zoom (screen only) ── */
 .rgb-zoom { display: flex; align-items: center; gap: 8px; }
 .rgb-zoom-val { min-width: 46px; text-align: center; font-size: 13px; font-weight: 600; color: #d8d2c4; }
+/*
+ * `zoom`, deliberately, not `transform: scale()`.
+ *
+ * A transform is painted after layout, so the scaled-down sheet still RESERVED
+ * its full 794px of width. On a 375px phone the surrounding flex column stayed
+ * 794px wide, the viewport clipped it, and — because nothing overflowed the
+ * document itself — there was no scrollbar to recover the rest. Half of every
+ * invoice was simply unreachable on a phone.
+ *
+ * `zoom` scales layout too, so the sheet genuinely becomes 375px wide, centres
+ * itself, and nothing is cut off. It is a legacy property, but it is supported
+ * in every browser this app targets (and is now in the CSS spec).
+ */
 .rgb-zoom-wrap {
   display: flex; flex-direction: column; align-items: center; gap: 16px;
-  transform: scale(var(--rgb-zoom, 1));
-  transform-origin: top center;
-  transition: transform .12s ease-out;
+  zoom: var(--rgb-zoom, 1);
 }
 
 /* ── The A4 sheet ── */
@@ -91,9 +120,27 @@
 /* ── Logo (recreated wordmark) ── */
 /* Letterhead lockup: monogram left, business name right, centred as a unit.
    Mirrors <BrandLockup> on screen so paper and app agree. */
-.rgb-lockup { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.rgb-lockup { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .rgb-lockup-mark { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-.rgb-lockup-text { text-align: left; }
+/*
+ * The text half is given the mark's own height, so the two halves of the
+ * lockup are the same size and line up whatever the renderer does with
+ * `align-items` — the shared PDF is rasterised by html2canvas, whose flexbox
+ * support is not something to bet a letterhead on.
+ *
+ * The 0.06em nudge is optical, not structural: a line box centres on its
+ * metrics, which include room for descenders, so a word with a "g" in it
+ * reads as sitting low even when the box is exactly centred. Lifting it by a
+ * fraction of the cap height puts the letterforms where the eye expects them.
+ */
+.rgb-lockup-text {
+  text-align: left;
+  min-height: var(--rgb-mark, 52px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transform: translateY(-0.06em);
+}
 .rgb-lockup-sub {
   font-family: var(--font-sans), system-ui, sans-serif;
   letter-spacing: 0.22em;
@@ -115,7 +162,9 @@
 .rgb-meta > :only-child { margin-left: auto; }
 .rgb-doc-title { font-size: 17px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #1a1a1a; }
 .rgb-slipno { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; margin-top: 2px; color: #4a4436; }
-.rgb-contact { font-size: 9.5px; color: #6b6455; line-height: 1.7; }
+.rgb-contact { font-size: 9.5px; color: #6b6455; line-height: 1.55; text-align: left; }
+/* The house name heads the contact block beneath the letterhead. */
+.rgb-contact-name { font-size: 11px; font-weight: 700; color: #1a1a1a; letter-spacing: 0.02em; }
 
 /* An explicit line-height and nowrap are load-bearing, not cosmetic: the PDF
    is rasterised by html2canvas, which lays letter-spaced text out slightly
@@ -427,8 +476,14 @@
   }
   .grain::before { display: none !important; }
   .rgb-toolbar { display: none !important; }
-  /* Never scale the printed sheet — zoom is a screen affordance only. */
-  .rgb-zoom-wrap { transform: none !important; display: block !important; gap: 0 !important; }
+  /* Never scale the printed sheet — the fit-to-width zoom is a screen
+     affordance only, and on paper the sheet is always full size. */
+  .rgb-zoom-wrap {
+    zoom: 1 !important;
+    transform: none !important;
+    display: block !important;
+    gap: 0 !important;
+  }
   .rgb-backdrop {
     display: block;
     background: #fff;

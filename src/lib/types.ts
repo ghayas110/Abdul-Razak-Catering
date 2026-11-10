@@ -201,7 +201,16 @@ export interface UserRow {
  * form-state bug.
  */
 export type CateringSection = 'DISH' | 'CHARGE';
-export type CateringUnit = 'KG' | 'GRAM' | 'LITRE' | 'ML' | 'PCS' | 'PLATE';
+/**
+ * Every unit a line can be counted in, in the order the pickers list them.
+ *
+ * THE single source. The type below is derived from it, `UNIT_META` must cover
+ * it, the server actions validate against it, and the database ENUMs list the
+ * same values — so adding a unit is this line plus one migration, and the four
+ * of them cannot drift apart.
+ */
+export const CATERING_UNITS = ['KG', 'GRAM', 'LITRE', 'ML', 'CUP', 'PCS', 'NOS', 'PLATE'] as const;
+export type CateringUnit = (typeof CATERING_UNITS)[number];
 
 /**
  * What a unit measures, and how many BASE units one of it is worth.
@@ -216,7 +225,20 @@ export const UNIT_META: Record<CateringUnit, { label: string; measure: 'WEIGHT' 
   GRAM:  { label: 'g',      measure: 'WEIGHT', base: 'KG',    factor: 0.001 },
   LITRE: { label: 'litre',  measure: 'VOLUME', base: 'LITRE', factor: 1 },
   ML:    { label: 'ml',     measure: 'VOLUME', base: 'LITRE', factor: 0.001 },
+  /**
+   * A cup is a SERVING here, not a quarter-litre.
+   *
+   * It would be tidy to call it volume and give it a 0.25 factor against the
+   * litre, and it would also quietly quarter the money: a line reading
+   * "20 cup @ 80" would bill 400 instead of 1,600, because the arithmetic
+   * assumes a rate quoted per base unit. This house sells a cup of raita at a
+   * price per cup, so the cup is its own base and what is typed is what is
+   * billed. Same reasoning as the plate below.
+   */
+  CUP:   { label: 'cup',    measure: 'COUNT',  base: 'CUP',   factor: 1 },
   PCS:   { label: 'pcs',    measure: 'COUNT',  base: 'PCS',   factor: 1 },
+  /** "Nos" — the count the client writes on a paper bill. Distinct from pcs. */
+  NOS:   { label: 'nos',    measure: 'COUNT',  base: 'NOS',   factor: 1 },
   // Much of the menu is sold by the head rather than by weight. A plate is a
   // count like a piece, so it needs its own base: a dish priced per plate must
   // not offer "pcs" as an interchangeable unit, because they are not the same
@@ -269,39 +291,23 @@ export interface CateringCustomerRow {
   quotationCount?: number;
 }
 
-export interface CateringCategoryRow {
-  id: number;
-  name: string;
-  sortOrder: number;
-  isActive: 0 | 1;
-  /** How many dishes use it — blocks a careless delete. */
-  itemCount?: number;
-}
-
 /**
- * One priced variant of a dish: QORMA under BEEF at 1,200/kg.
+ * A dish on the rate card: one name, one unit, one rate.
  *
- * The category is what sets the price, so a dish carries one variant per
- * category it is sold under, and picking the category on a quotation line is
- * what prices that line.
+ * Dishes used to carry a priced variant per CATEGORY (QORMA under BEEF, under
+ * CHICKEN), and a quotation line had to pick the category before it had a
+ * price. This house quotes one rate per dish, so categories are gone entirely
+ * — from the menu, from quotations, from invoices and from the printed slip.
  */
-export interface CateringVariantRow {
-  categoryId: number;
-  categoryName: string;
-  rate: number;
-}
-
 export interface CateringMenuItemRow {
   id: number;
   name: string;
   /** The unit the rate is quoted in — KG, LITRE or PCS. */
   unit: CateringUnit;
-  /** Used when a dish carries no category variants. */
-  defaultRate: number;
+  rate: number;
   sortOrder: number;
   isActive: 0 | 1;
   usedCount?: number;
-  variants: CateringVariantRow[];
 }
 
 export interface CateringLineRow {
@@ -310,8 +316,6 @@ export interface CateringLineRow {
   section: CateringSection;
   menuItemId: number | null;
   description: string;
-  category: string;
-  categoryId: number | null;
   qty: number;
   unit: CateringUnit;
   rate: number;
@@ -368,26 +372,167 @@ export interface CateringPaymentRow {
   note: string | null;
 }
 
+/**
+ * PENDING: nothing paid yet. PARTIAL: some of it has come in. RECEIVED: paid
+ * in full. Derived from `paidAmount` vs `amount`, never set directly — see
+ * `recordCateringReceivablePayment`.
+ */
+export type CateringReceivableStatus = 'PENDING' | 'PARTIAL' | 'RECEIVED';
+
+export const CATERING_RECEIVABLE_STATUS_META: Record<CateringReceivableStatus, { label: string; tone: 'green' | 'amber' | 'gold' }> = {
+  PENDING: { label: 'Pending', tone: 'amber' },
+  PARTIAL: { label: 'Partial', tone: 'gold' },
+  RECEIVED: { label: 'Received', tone: 'green' },
+};
+
+/**
+ * A debt owed to the business that is not a quotation — a personal loan, a
+ * gift promised in installments. `amount` is the TOTAL owed; `paidAmount` is
+ * the running total of everything paid against it so far, kept in step with
+ * `CateringReceivablePaymentRow` below exactly the way a quotation's
+ * `paidAmount` is kept in step with its payments. `payerName` is free text:
+ * most of these people are never going to be a saved customer.
+ */
+export interface CateringReceivableRow {
+  id: number;
+  payerName: string;
+  amount: number;
+  paidAmount: number;
+  /** amount - paidAmount, never below zero. */
+  balance: number;
+  receivedDate: string;
+  status: CateringReceivableStatus;
+  note: string;
+  createdBy: number | null;
+  createdByName: string | null;
+  createdAt: string;
+}
+
+/** One installment against a CateringReceivableRow. Mirrors CateringPaymentRow. */
+export interface CateringReceivablePaymentRow {
+  id: number;
+  receivableId: number;
+  amount: number;
+  paymentDate: string;
+  method: string;
+  note: string | null;
+  receivedBy: number | null;
+  receivedByName: string | null;
+}
+
+/**
+ * PENDING: nothing paid yet. PARTIAL: some has gone out. PAID: settled in
+ * full. Derived from `paidAmount` vs `amount`, never set directly — see
+ * `recordCateringExpensePayment`.
+ */
+export type CateringExpenseStatus = 'PENDING' | 'PARTIAL' | 'PAID';
+
+export const CATERING_EXPENSE_STATUS_META: Record<CateringExpenseStatus, { label: string; tone: 'green' | 'amber' | 'gold' }> = {
+  PENDING: { label: 'Pending', tone: 'amber' },
+  PARTIAL: { label: 'Partial', tone: 'gold' },
+  PAID: { label: 'Paid', tone: 'green' },
+};
+
+/**
+ * A debt the business owes that is not a vendor bill against one event — a
+ * utility bill, a one-off service payment, equipment. `amount` is the TOTAL
+ * owed; `paidAmount` is the running total paid against it so far, kept in
+ * step with `CateringExpensePaymentRow` below exactly the way a receivable's
+ * `paidAmount` is kept in step with its payments.
+ */
+export interface CateringExpenseRow {
+  id: number;
+  category: string;
+  payee: string;
+  amount: number;
+  paidAmount: number;
+  /** amount - paidAmount, never below zero. */
+  balance: number;
+  status: CateringExpenseStatus;
+  expenseDate: string;
+  note: string;
+  createdBy: number | null;
+  createdByName: string | null;
+  createdAt: string;
+}
+
+/** One installment against a CateringExpenseRow. Mirrors CateringReceivablePaymentRow. */
+export interface CateringExpensePaymentRow {
+  id: number;
+  payableId: number;
+  amount: number;
+  paymentDate: string;
+  method: string;
+  note: string | null;
+  paidBy: number | null;
+  paidByName: string | null;
+}
+
+/**
+ * A bill with no dish behind it — a name, a date, and a list of lines. Each
+ * line is shaped like a quotation's DISH row (description, qty, unit, rate)
+ * but carries no `menuItemId`: a custom bill is deliberately unlinked from the
+ * menu, so the operator types the whole line.
+ */
+export interface CateringCustomBillItemRow {
+  id: number;
+  billId: number;
+  /** DISH is qty x rate; CHARGE is an amount typed as-is, like a quotation's charge band. */
+  section: CateringSection;
+  description: string;
+  qty: number;
+  unit: CateringUnit;
+  rate: number;
+  amount: number;
+  sortOrder: number;
+}
+
+export interface CateringCustomBillRow {
+  id: number;
+  billNo: string;
+  billTo: string;
+  contactNo: string;
+  address: string;
+  billDate: string;
+  grandTotal: number;
+  note: string;
+  createdBy: number | null;
+  createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Filled by the detail/edit read; the list leaves it undefined. */
+  items?: CateringCustomBillItemRow[];
+}
+
 /** The catering arm's own trading identity, printed on its slip. */
 export interface CateringProfile {
   name: string;
   person: string;
   phone: string;
   address: string;
-  terms: string;
-  note: string;
+  /**
+   * Whether the standing conditions print on customer documents at all.
+   *
+   * Off by default: this house hands over a slip with the prices on it and
+   * nothing else, and a fresh install should not put words in their mouth.
+   * Turning it on prints whatever is in Catering → Rules — and ONLY that.
+   * There is deliberately no second, hardcoded source of terms: two places to
+   * edit the same paragraph is how a slip ends up contradicting itself.
+   */
+  showTerms: boolean;
   /** Printed in the slip header beside the status, not in the conditions. */
   taxNote: string;
   quotaPrefix: string;
 }
 
 export const CATERING_PROFILE_DEFAULTS: CateringProfile = {
-  name: 'Abdul Razak Catering Service',
+  name: 'Abdul Razzak Catering',
   person: '',
-  phone: '',
-  address: '',
-  terms: 'Terms of Payment: 75% Advance & Balance After Program.',
-  note: 'Prices quoted are based on prevailing market rates and are held for 15 days from the date of this quotation. Final billing is against the headcount confirmed 48 hours before the event.',
+  // Printed beneath the letterhead. Comma-separated numbers each get a line.
+  phone: '0334-1669655, 0321-2032532',
+  address: '1245/2 Azizabad, F.B. Area, Karachi',
+  // Off unless the client deliberately turns it on in Catering -> Settings.
+  showTerms: false,
   // Empty by default: the tax line prints only if someone deliberately sets
   // one in Catering -> Settings.
   taxNote: '',

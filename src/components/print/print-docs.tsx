@@ -2,7 +2,7 @@ import { fmtMoney, fmtDate, fmtPhone } from '@/lib/format';
 import { BRAND_DEFAULTS, type BrandInfo } from '@/lib/brand-info';
 
 // ── Shared bits ────────────────────────────────────────
-/** Light-ray divider — the print twin of `<Rays>` in src/components/brand.tsx. */
+/** Light-ray divider used inside printed documents. */
 function Flourish({ flip }: { flip?: boolean }) {
   return (
     <svg viewBox="0 0 240 24" width="150" height="15" className="rgb-flourish" style={{ display: 'block', margin: '0 auto', transform: flip ? 'rotate(180deg)' : undefined }} fill="none" aria-hidden>
@@ -20,9 +20,9 @@ function Flourish({ flip }: { flip?: boolean }) {
 }
 
 /**
- * The wordmark line. When the tagline is the last word of the business name
- * ("Abdul Razak Catering Service" / "Catering Service") it is dropped from the big line, since it
- * already prints underneath — otherwise the whole name is used.
+ * The wordmark line. The house name prints whole, on one line. A tagline is
+ * optional and normally blank; when one IS set and the name ends with it, it
+ * is dropped from the big line because it already prints underneath.
  */
 function wordmark(brand: BrandInfo): string {
   const name = (brand.name ?? '').trim();
@@ -72,14 +72,30 @@ function BandFill() {
  * it without a halo.
  */
 function LogoBand({ size = 'md', brand }: { size?: 'md' | 'lg'; brand: BrandInfo }) {
-  const word = size === 'lg' ? '34px' : '28px';
+  /**
+   * The wordmark is sized AGAINST the mark, not independently.
+   *
+   * It used to be 28px beside a 52px mark, which read as two separate things
+   * stuck side by side: the type overpowered the crest, and because the text
+   * box was only 29px tall against the mark's 52px, the two had different
+   * heights and the word — descender and all — sat visibly lower than the
+   * crest's centre. Roughly 0.42 of the mark keeps the cap height close to the
+   * crest's inner monogram, which is what makes the pair read as one lockup.
+   */
+  const markPx = size === 'lg' ? 62 : 52;
+  const word = `${Math.round(markPx * 0.42)}px`;
   const sub = size === 'lg' ? '13px' : '11px';
-  const mark = size === 'lg' ? '62px' : '52px';
+  const mark = `${markPx}px`;
 
   return (
     <div className="rgb-band">
       <BandFill />
-      <div className="rgb-lockup">
+      {/* Both halves of the lockup are given the mark's height (see
+          .rgb-lockup-text in print.css), so they are centred by construction
+          rather than by the renderer agreeing with us about flexbox — which
+          html2canvas, the rasteriser behind the shared PDF, does not reliably
+          do. */}
+      <div className="rgb-lockup" style={{ ['--rgb-mark' as string]: mark }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/logo-mark.png"
@@ -104,24 +120,37 @@ function LogoBand({ size = 'md', brand }: { size?: 'md' | 'lg'; brand: BrandInfo
 }
 
 /**
- * The footer band on every printed document.
+ * The footer band on every printed document: the dark bookend to the header.
  *
- * Address and phone only. Social handles are for the website, where they are
- * clickable; on paper they are noise a customer cannot act on, and they crowd
- * the line that carries the details someone actually needs to reach you.
- *
- * `brand.facebook` and `brand.instagram` are untouched and still drive the
- * site's own links and its structured data.
+ * It carries no text. The address and phone numbers used to print here; they
+ * now sit beneath the letterhead (see ContactBlock), and printing them again
+ * at the foot of a one-page slip would say the same thing twice.
  */
-function FooterBand({ brand }: { brand: BrandInfo }) {
+function FooterBand(_: { brand: BrandInfo }) {
   return (
     <div className="rgb-band-footer">
       <BandFill />
-      {/* Each half is conditional. Until Settings -> Business Profile is
-          filled in these are empty strings, and a bare "Phone:" with nothing
-          after it printed on a signed quotation reads as a fault. */}
-      {brand.address && <span>📍 {brand.address}</span>}
-      {brand.footerPhone && <span>Phone: {brand.footerPhone}</span>}
+    </div>
+  );
+}
+
+/**
+ * The house name, shop address and phone numbers, set beneath the letterhead
+ * on the left of the title row — the right side carries the document title.
+ *
+ * Everything comes from Catering -> Settings. Phone numbers are stored as one
+ * comma-separated field and each prints on its own line. With nothing set the
+ * block renders nothing, and the title row's `:only-child` rule pushes the
+ * title back to the right.
+ */
+function ContactBlock({ name, address, phone }: { name: string; address?: string; phone?: string }) {
+  const phones = (phone ?? '').split(/[,/\n]/).map((n) => n.trim()).filter(Boolean);
+  if (!name && !address && phones.length === 0) return null;
+  return (
+    <div className="rgb-contact">
+      {name && <div className="rgb-contact-name">{name}</div>}
+      {address && <div>{address}</div>}
+      {phones.map((n) => <div key={n}>{n}</div>)}
     </div>
   );
 }
@@ -204,16 +233,20 @@ export interface CateringReportDocData {
  * what was left. Landscape, because ten columns will not sit on a portrait A4
  * without shrinking the type past reading size.
  */
-export function CateringReportDoc({ r, p, brand }: {
+export function CateringReportDoc({ r, p, brand, receivableTotal = 0, expenseTotal = 0 }: {
   r: CateringReportDocData;
   p: CateringDocProfile;
   brand: BrandInfo;
+  /** Money received/paid outside the quotation system for this same period — see catering.ts. */
+  receivableTotal?: number;
+  expenseTotal?: number;
 }) {
   const cateringName = p.name || brand.name;
   const cateringBrand: BrandInfo = {
     ...brand,
     name: cateringName,
-    tagline: cateringName.split(' ').slice(1).join(' ') || brand.tagline,
+    // No second line under the wordmark: the house name is set whole, on one line.
+    tagline: '',
     address: p.address || brand.address,
     footerPhone: p.phone || brand.footerPhone,
   };
@@ -225,6 +258,7 @@ export function CateringReportDoc({ r, p, brand }: {
       <LogoBand brand={cateringBrand} />
       <div className="rgb-body">
         <div className="rgb-meta">
+          <ContactBlock name={cateringName} address={cateringBrand.address} phone={cateringBrand.footerPhone} />
           <div style={{ textAlign: 'right' }}>
             <div className="rgb-doc-title">Catering Report</div>
             <div className="rgb-slipno">{r.label}</div>
@@ -303,7 +337,13 @@ export function CateringReportDoc({ r, p, brand }: {
               <tr><td className="lbl">Events</td><td className="val">{r.rows.length}</td></tr>
               <tr><td className="lbl">Revenue</td><td className="val">{money(r.totals.total)}</td></tr>
               <tr><td className="lbl">Vendor Cost</td><td className="val">{money(r.totals.vendor)}</td></tr>
-              <tr className="total"><td>Profit Earned</td><td className="val">{money(r.totals.profit)}</td></tr>
+              {receivableTotal > 0 && (
+                <tr><td className="lbl">Amount Receivable</td><td className="val" style={{ color: '#2E7D32' }}>+{money(receivableTotal)}</td></tr>
+              )}
+              {expenseTotal > 0 && (
+                <tr><td className="lbl">Other Payables</td><td className="val" style={{ color: '#C62828' }}>-{money(expenseTotal)}</td></tr>
+              )}
+              <tr className="total"><td>Profit Earned</td><td className="val">{money(r.totals.profit + receivableTotal - expenseTotal)}</td></tr>
               <tr><td className="lbl">Received</td><td className="val" style={{ color: '#2E7D32' }}>{money(r.totals.received)}</td></tr>
               <tr className="grand">
                 <td>Balance Due</td>
@@ -345,7 +385,6 @@ export interface CateringDocData {
   lines: {
     section: 'DISH' | 'CHARGE';
     description: string;
-    category: string;
     qty: number;
     unit: string;
     rate: number;
@@ -354,7 +393,7 @@ export interface CateringDocData {
 }
 
 export interface CateringDocProfile {
-  name: string; person: string; phone: string; address: string; terms: string; note: string;
+  name: string; person: string; phone: string; address: string;
   /** Printed in the header beside the status. Blank hides the line entirely. */
   taxNote?: string;
 }
@@ -363,8 +402,8 @@ export interface CateringDocProfile {
  * The catering quotation slip.
  *
  * Carries every field the client's existing paper form does: quota number,
- * place of function, event date, headcount, the dish grid with its CATEGORIES
- * and quantity columns, the transport and service charges, and the terms.
+ * place of function, event date, headcount, the dish grid with its quantity
+ * and rate columns, the transport and service charges, and the terms.
  *
  * One table, one total. Dishes are quoted all-in, so nothing is broken out
  * underneath them and the customer reads a single price per item.
@@ -394,7 +433,8 @@ export function CateringQuotationDoc({ d, p, rules = [], brand }: {
   const cateringBrand: BrandInfo = {
     ...brand,
     name: cateringName,
-    tagline: cateringName.split(' ').slice(1).join(' ') || brand.tagline,
+    // No second line under the wordmark: the house name is set whole, on one line.
+    tagline: '',
     address: p.address || brand.address,
     footerPhone: p.phone || brand.footerPhone,
   };
@@ -423,6 +463,7 @@ export function CateringQuotationDoc({ d, p, rules = [], brand }: {
       <LogoBand brand={cateringBrand} />
       <div className="rgb-body">
         <div className="rgb-meta">
+          <ContactBlock name={cateringName} address={cateringBrand.address} phone={cateringBrand.footerPhone} />
           <div style={{ textAlign: 'right' }}>
             <div className="rgb-doc-title">{isInvoice ? 'Catering Invoice' : 'Catering Quotation'}</div>
             <div className="rgb-slipno">{isInvoice ? 'Invoice' : 'Quota'} # {d.quotaNo}</div>
@@ -458,11 +499,10 @@ export function CateringQuotationDoc({ d, p, rules = [], brand }: {
           <thead>
             <tr>
               <th className="c" style={{ width: '6%' }}>S.No</th>
-              <th style={{ width: '34%' }}>Description</th>
-              <th style={{ width: '20%' }}>Categories</th>
-              <th className="r" style={{ width: '13%' }}>Quantity</th>
-              <th className="r" style={{ width: '13%' }}>Rate</th>
-              <th className="r" style={{ width: '14%' }}>Amount</th>
+              <th style={{ width: '46%' }}>Description</th>
+              <th className="r" style={{ width: '15%' }}>Quantity</th>
+              <th className="r" style={{ width: '15%' }}>Rate</th>
+              <th className="r" style={{ width: '18%' }}>Amount</th>
             </tr>
           </thead>
           <tbody>
@@ -470,7 +510,6 @@ export function CateringQuotationDoc({ d, p, rules = [], brand }: {
               <tr key={`d${i}`}>
                 <td className="c">{i + 1}</td>
                 <td>{l.description}</td>
-                <td>{l.category || '—'}</td>
                 <td className="r">{l.qty ? `${fmtMoney(l.qty, false)} ${l.unit}` : '—'}</td>
                 <td className="r">{l.rate ? fmtMoney(l.rate, false) : '—'}</td>
                 <td className="r">{fmtMoney(l.amount, false)}</td>
@@ -481,12 +520,12 @@ export function CateringQuotationDoc({ d, p, rules = [], brand }: {
               <tr key={`c${i}`}>
                 <td className="c" />
                 <td>{l.description}</td>
-                <td colSpan={3} style={{ color: '#a49c88' }}>Charge</td>
+                <td colSpan={2} style={{ color: '#a49c88' }}>Charge</td>
                 <td className="r">{fmtMoney(l.amount, false)}</td>
               </tr>
             ))}
             <tr className="rgb-row-total">
-              <td colSpan={5} className="r">Items Total</td>
+              <td colSpan={4} className="r">Items Total</td>
               <td className="r">{fmtMoney(d.itemsTotal, false)}</td>
             </tr>
           </tbody>
@@ -511,15 +550,138 @@ export function CateringQuotationDoc({ d, p, rules = [], brand }: {
           </div>
         )}
 
-        {/* Payment terms first, then the standing rules from Catering → Rules,
-            then the standing note, then anything typed on this one quotation. */}
-        <InlineTerms
-          rules={[p.terms, ...rules, p.note, ...(d.note ? [d.note] : [])].filter(Boolean) as string[]}
-          notes={null}
-        />
+        {/* Conditions come from Catering → Rules, and only when Settings says
+            to print them at all — `rules` arrives empty otherwise. There is no
+            second, hardcoded source: the slip used to splice in a payment-terms
+            line and a standing note from the profile as well, which meant the
+            same paragraph lived in three places and drifted.
+
+            The note typed on THIS document is separate. It is the operator's
+            own line about this one job, not boilerplate, so it prints whether
+            or not conditions do. */}
+        <InlineTerms rules={rules} notes={d.note} />
 
         <div className="rgb-signs" style={{ marginTop: 'auto', paddingTop: '12px' }}>
           <div className="rgb-sign-line">{p.person || 'Customer Signature'}</div>
+          <div className="rgb-stamp">STAMP</div>
+          <div className="rgb-sign-line">Authorised Signature</div>
+        </div>
+      </div>
+      <FooterBand brand={cateringBrand} />
+    </div>
+  );
+}
+
+// ── Catering custom bill ────────────────────────────────
+export interface CateringCustomBillDocData {
+  billNo: string;
+  billTo: string;
+  contactNo: string;
+  address: string;
+  billDate: string;
+  grandTotal: number;
+  note: string;
+  items: { section: 'DISH' | 'CHARGE'; description: string; qty: number; unit: string; rate: number; amount: number }[];
+}
+
+/**
+ * A bill with no menu behind it — Bill To, a date, and whatever charges
+ * belong on it. Same letterhead and one-page shell as the quotation slip, cut
+ * down to just the fields a custom bill actually carries: nothing from the
+ * menu, and no advance/balance tracking, because this document isn't tied to
+ * the invoice-with-installments system at all.
+ */
+export function CustomBillDoc({ d, p, rules = [], brand }: {
+  d: CateringCustomBillDocData; p: CateringDocProfile;
+  /** Active rules from Catering → Rules, or empty when Settings hides them. */
+  rules?: string[];
+  brand: BrandInfo;
+}) {
+  const cateringName = p.name || brand.name;
+  const cateringBrand: BrandInfo = {
+    ...brand,
+    name: cateringName,
+    // No second line under the wordmark: the house name is set whole, on one line.
+    tagline: '',
+    address: p.address || brand.address,
+    footerPhone: p.phone || brand.footerPhone,
+  };
+
+  const lines = d.items.filter((it) => it.section !== 'CHARGE');
+  const charges = d.items.filter((it) => it.section === 'CHARGE');
+  const rowCount = d.items.length;
+  const density = rowCount > 13 ? ' rgb-cater--xx' : rowCount > 10 ? ' rgb-cater--x' : rowCount > 6 ? ' rgb-cater--dense' : '';
+
+  return (
+    <div className={`rgb-sheet rgb-onepage rgb-cater${density}`}>
+      <LogoBand brand={cateringBrand} />
+      <div className="rgb-body">
+        <div className="rgb-meta">
+          <ContactBlock name={cateringName} address={cateringBrand.address} phone={cateringBrand.footerPhone} />
+          <div style={{ textAlign: 'right' }}>
+            <div className="rgb-doc-title">Bill</div>
+            <div className="rgb-slipno">Bill # {d.billNo}</div>
+            <div style={{ fontSize: '11px', color: '#6b6455', marginTop: '2px', fontWeight: 600 }}>
+              Date: {fmtDate(d.billDate)}
+            </div>
+          </div>
+        </div>
+
+        <table className="rgb-kv">
+          <tbody>
+            <tr>
+              <td className="k">Bill To</td><td>{d.billTo || '—'}</td>
+              <td className="k">Date</td><td>{fmtDate(d.billDate)}</td>
+            </tr>
+            <tr>
+              <td className="k">Contact No.</td><td>{d.contactNo ? fmtPhone(d.contactNo) : '—'}</td>
+              <td className="k">Address</td><td>{d.address || '—'}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div className="rgb-sec">Items</div>
+        <table className="rgb-table">
+          <thead>
+            <tr>
+              <th className="c" style={{ width: '6%' }}>S.No</th>
+              <th style={{ width: '46%' }}>Description</th>
+              <th className="r" style={{ width: '15%' }}>Quantity</th>
+              <th className="r" style={{ width: '15%' }}>Rate</th>
+              <th className="r" style={{ width: '18%' }}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((it, i) => (
+              <tr key={`l${i}`}>
+                <td className="c">{i + 1}</td>
+                <td>{it.description}</td>
+                <td className="r">{it.qty ? `${fmtMoney(it.qty, false)} ${it.unit}` : '—'}</td>
+                <td className="r">{it.rate ? fmtMoney(it.rate, false) : '—'}</td>
+                <td className="r">{fmtMoney(it.amount, false)}</td>
+              </tr>
+            ))}
+            {/* Transport / service — an amount with no quantity or rate, set
+                out exactly as the quotation slip sets out its charges. */}
+            {charges.map((it, i) => (
+              <tr key={`c${i}`}>
+                <td className="c" />
+                <td>{it.description}</td>
+                <td colSpan={2} style={{ color: '#a49c88' }}>Charge</td>
+                <td className="r">{fmtMoney(it.amount, false)}</td>
+              </tr>
+            ))}
+            <tr className="rgb-row-total">
+              <td colSpan={4} className="r">Grand Total</td>
+              <td className="r">{fmtMoney(d.grandTotal, false)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <InlineTerms rules={rules} notes={d.note || null} />
+
+        <div className="rgb-signs" style={{ marginTop: 'auto', paddingTop: '12px' }}>
+          <div className="rgb-sign-line">{p.person || 'Signature'}</div>
           <div className="rgb-stamp">STAMP</div>
           <div className="rgb-sign-line">Authorised Signature</div>
         </div>

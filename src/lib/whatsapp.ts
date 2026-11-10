@@ -123,3 +123,37 @@ export function cateringQuotationText(q: QuotationForMessage, b: CateringBrandFo
   lines.push('', 'Thank you for considering us.');
   return lines.join('\n');
 }
+
+export interface CustomBillForMessage {
+  billNo: string;
+  billTo: string;
+  billDate: string;
+  grandTotal: number;
+}
+
+/**
+ * The bill a custom-bill recipient receives. Same plain-text, no-links shape
+ * as `cateringQuotationText` and for the same reason — these get forwarded
+ * between family members and anything clever arrives mangled.
+ */
+export function customBillWhatsAppText(bill: CustomBillForMessage, b: CateringBrandForMessage): string {
+  const lines = [
+    `Assalam-o-Alaikum ${bill.billTo || 'sir'},`,
+    '',
+    `Here is your bill from ${b.name}:`,
+    '',
+    `Bill #: ${bill.billNo}`,
+    `Date: ${fmtDateWithDay(bill.billDate)}`,
+    '',
+    `Total: ${fmtMoney(bill.grandTotal)}`,
+    '',
+  ];
+
+  if (b.terms) { lines.push(b.terms); lines.push(''); }
+  if (b.address) lines.push(b.address);
+  const contact = [b.person, b.phone].filter(Boolean).join(' ');
+  if (contact) lines.push(`Contact: ${contact}`);
+
+  lines.push('', 'Thank you.');
+  return lines.join('\n');
+}

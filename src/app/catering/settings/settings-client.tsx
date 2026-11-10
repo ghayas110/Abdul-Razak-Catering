@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Card, SectionTitle, Button, Field, Input, Textarea } from '@/components/ui';
+import Link from 'next/link';
+import { Card, SectionTitle, Button, Field, Input, Textarea, Toggle } from '@/components/ui';
 import { saveCateringProfile } from '@/lib/actions/catering';
 import type { CateringProfile } from '@/lib/types';
-import { Save } from 'lucide-react';
+import { Save, HelpCircle } from 'lucide-react';
 
 export function SettingsClient({ profile }: { profile: CateringProfile }) {
   const [form, setForm] = useState(profile);
@@ -12,7 +13,8 @@ export function SettingsClient({ profile }: { profile: CateringProfile }) {
   const [err, setErr] = useState('');
   const [pending, start] = useTransition();
 
-  const set = (k: keyof CateringProfile, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  type StringKey = Exclude<keyof CateringProfile, 'showTerms'>;
+  const set = (k: StringKey, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   function submit() {
     setErr(''); setMsg('');
@@ -49,15 +51,46 @@ export function SettingsClient({ profile }: { profile: CateringProfile }) {
         <Field label="Shop address">
           <Textarea rows={2} value={form.address} onChange={(e) => set('address', e.target.value)} />
         </Field>
-        <Field label="Terms of payment" hint="First line of the terms box">
-          <Textarea rows={2} value={form.terms} onChange={(e) => set('terms', e.target.value)} />
-        </Field>
         <Field label="Tax line" hint="Prints in the slip header, just above the status. Leave blank to hide it.">
           <Input value={form.taxNote} onChange={(e) => set('taxNote', e.target.value)} placeholder="If Tax Apply Pay by Party" />
         </Field>
-        <Field label="Standing note" hint="How long the prices hold, or anything else that prints on every quotation">
-          <Textarea rows={3} value={form.note} onChange={(e) => set('note', e.target.value)} />
-        </Field>
+
+        {/* The one switch that decides whether customers see conditions at
+            all. There is no wording to edit here on purpose — see the help
+            text: Catering → Rules is the single source. */}
+        <div className="rounded-xl border border-[rgb(var(--border)/0.6)] bg-[rgb(var(--surface-2)/0.5)] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium text-[rgb(var(--text))]">
+                Print terms &amp; conditions on customer documents
+              </div>
+              <div className="mt-0.5 text-xs text-[rgb(var(--text-dim))]">
+                Quotations, invoices and custom bills.
+              </div>
+            </div>
+            <Toggle
+              checked={form.showTerms}
+              onChange={(v) => setForm((f) => ({ ...f, showTerms: v }))}
+              label={form.showTerms ? 'Showing' : 'Hidden'}
+            />
+          </div>
+
+          <div className="mt-3 flex gap-2 rounded-lg bg-[rgb(var(--surface))] p-3 text-xs leading-relaxed text-[rgb(var(--text-muted))]">
+            <HelpCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold" />
+            <div>
+              <p>
+                {form.showTerms
+                  ? 'Every active rule from Catering → Rules prints at the bottom of the slip, in order.'
+                  : 'Nothing prints at the bottom of the slip. Customers get the items and the total, and no conditions.'}
+              </p>
+              <p className="mt-1.5">
+                The wording lives in <Link href="/catering/rules" className="text-gold hover:underline">Catering → Rules</Link> and
+                nowhere else — edit a rule there and every document follows. Switching a rule off there removes just that
+                line; this switch turns the whole block off.
+              </p>
+            </div>
+          </div>
+        </div>
         <div className="flex justify-end">
           <Button onClick={submit} disabled={pending}>
             <Save className="mr-1.5 h-4 w-4" />{pending ? 'Saving…' : 'Save profile'}

@@ -3,7 +3,7 @@ import { BrandLockup } from '@/components/brand';
 import { getSessionUser } from '@/lib/session';
 import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Sign in — Abdul Razak Catering' };
+export const metadata = { title: 'Sign in — Abdul Razzak Catering' };
 
 export default async function LoginPage() {
   // The installed PWA launches at /login (manifest start_url). If the session

@@ -232,10 +232,37 @@ NEXTAUTH_SECRET="${secret}"
   );
   console.log(`• Env template targets ${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}`);
 
-  // 7. Deploy guide.
+  /**
+   * 7. The static files, packaged separately for the DOMAIN'S DOCUMENT ROOT.
+   *
+   * On cPanel every request reaches the app through Passenger, which means the
+   * Node process wakes up to hand over photographs and icons — work it should
+   * never be doing. Apache serves a file that exists in the document root
+   * itself and never starts the app, so copying these there takes the whole
+   * lot off the Node process.
+   *
+   * Shipped as a plain folder plus a snippet to APPEND to the document root's
+   * .htaccess. Deliberately not shipped as a ready-made .htaccess: that file
+   * already holds the Passenger directives that make the site run, and
+   * dropping a new one over it takes the site down.
+   */
+  console.log('• Packaging static assets for the document root …');
+  const docroot = path.join(out, 'static-for-docroot');
+  await mkdir(docroot, { recursive: true });
+  for (const name of ['photos', 'icons']) {
+    const src = path.join(root, 'public', name);
+    if (existsSync(src)) await cp(src, path.join(docroot, name), { recursive: true });
+  }
+  for (const f of ['logo.png', 'logo-mark.png', 'mail-logo.png']) {
+    const src = path.join(root, 'public', f);
+    if (existsSync(src)) await cp(src, path.join(docroot, f));
+  }
+  await writeFile(path.join(docroot, 'APPEND-TO-HTACCESS.txt'), htaccessSnippet());
+
+  // 8. Deploy guide.
   await writeFile(path.join(out, 'DEPLOY.md'), deployMd());
 
-  // 8. Zip for easy upload.
+  // 9. Zip for easy upload.
   console.log('• Zipping → cpanel-build.zip …');
   await rm(path.join(root, 'cpanel-build.zip'), { force: true });
   const { execSync } = await import('node:child_process');
@@ -262,8 +289,44 @@ async function dirSize(dir) {
   return total;
 }
 
+function htaccessSnippet() {
+  return `# ─────────────────────────────────────────────────────────────
+# Abdul Razzak Catering — static file handling
+#
+# APPEND these lines to the END of the .htaccess in your domain's document
+# root. Do NOT replace that file: it contains the Passenger lines that make
+# the site run, and overwriting them takes the site down.
+#
+# What this does: Apache serves the photographs and icons itself, with a long
+# cache, instead of waking the Node app for them. That is the single biggest
+# reduction in CPU for a site that is mostly read by search engines.
+# ─────────────────────────────────────────────────────────────
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/png  "access plus 1 year"
+  ExpiresByType image/x-icon "access plus 1 year"
+</IfModule>
+
+<IfModule mod_headers.c>
+  <FilesMatch "\\.(jpg|jpeg|webp|png|ico)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+# Compress text responses in Apache (C code) rather than in the Node process.
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml
+  AddOutputFilterByType DEFLATE application/javascript application/json
+  AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>
+`;
+}
+
 function deployMd() {
-  return `# Deploying Abdul Razak Catering Service to cPanel
+  return `# Deploying Abdul Razzak Catering to cPanel
 
 Self-contained Next.js production build (standalone output). Runs on cPanel's
 **Setup Node.js App** (Phusion Passenger). No \`npm run build\` on the server.
@@ -284,7 +347,8 @@ To update an existing database, run \`database/upgrade-existing-db.sql\` instead
 missing, keeps all your data, and is safe to run twice.
 
 Skipping it after an update causes **500 Internal Server Error** on pages that
-use the new tables (e.g. opening a booking when \`booking_rules\` is missing).
+use the new tables (e.g. opening Menu & Rates before the one-rate-per-dish
+upgrade has run).
 
 ## 1. Create the MySQL database (cPanel → MySQL® Databases)
 Create a database + user, add the user to the DB with **ALL PRIVILEGES**. Note the
@@ -322,6 +386,24 @@ Do **not** set \`PORT\` — Passenger injects it. **NextAuth needs \`NEXTAUTH_UR
 ## 6. Start it
 Back in Setup Node.js App, click **Restart**, then open your URL and sign in:
 - **${OWNER_EMAIL}** / **${OWNER_PASSWORD}**  → change this password immediately (My Account).
+
+## Keeping CPU usage down (read this if the account gets suspended)
+
+Shared hosting suspends an account for sustained CPU, and on a Node app the
+usual cause is the app being woken for work it should not be doing.
+
+1. **Put the static files in the document root.** Upload everything inside
+   \`static-for-docroot/\` into your domain's document root, so you end up with
+   \`photos/\`, \`icons/\` and the logo files there. Apache then serves them
+   directly and the Node app is never started for an image.
+2. **Append \`static-for-docroot/APPEND-TO-HTACCESS.txt\`** to the END of the
+   document root's \`.htaccess\`. Never replace that file — it holds the
+   Passenger directives the site runs on.
+3. **Leave the app running.** In Setup Node.js App, restarting on every request
+   is far more expensive than staying up. Do not set the app to stop when idle.
+4. **The public pages are cached for an hour** and the business profile is
+   cached until you save Settings, so search-engine traffic no longer costs a
+   render or a database query each time.
 
 ## Updating later
 Locally: \`npm run build:cpanel\`, upload + extract the new \`cpanel-build.zip\` over the

@@ -5,7 +5,8 @@ import { execute, queryOne, withTransaction } from '@/lib/db';
 import { assertPermission } from '@/lib/session';
 import { audit } from '@/lib/audit';
 import { revalidatePath } from 'next/cache';
-import { CATERING_BILLABLE, cateringLineAmount, type CateringUnit } from '@/lib/types';
+import { CATERING_BILLABLE, CATERING_UNITS, cateringLineAmount, type CateringUnit } from '@/lib/types';
+import { fmtMoney, fmtDate } from '@/lib/format';
 import { eventRootId } from '@/lib/catering';
 
 export type CateringResult = { ok: true; message?: string; id?: number } | { ok: false; error: string };
@@ -17,7 +18,6 @@ function refresh(id?: number) {
   revalidatePath(`${PATH}/quotations`);
   revalidatePath(`${PATH}/menu`);
   revalidatePath(`${PATH}/customers`);
-  revalidatePath(`${PATH}/categories`);
   revalidatePath(`${PATH}/rules`);
   revalidatePath(`${PATH}/invoices`);
   revalidatePath(`${PATH}/vendors`);
@@ -83,62 +83,6 @@ export async function deleteCateringCustomer(id: number): Promise<CateringResult
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Categories
-// ═══════════════════════════════════════════════════════════════
-
-const categorySchema = z.object({
-  name: z.string().trim().min(1, 'Category name required').max(60),
-  sortOrder: z.number().int().min(0).max(9999).default(0),
-});
-
-export async function saveCateringCategory(id: number | null, input: unknown): Promise<CateringResult> {
-  const actor = await assertPermission('catering.manage');
-  const parsed = categorySchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.errors[0].message };
-  const d = { ...parsed.data, name: parsed.data.name.toUpperCase() };
-
-  const clash = await queryOne<{ id: number }>(
-    `SELECT id FROM catering_categories WHERE name = ? AND id <> ?`, [d.name, id ?? 0],
-  );
-  if (clash) return { ok: false, error: `"${d.name}" already exists.` };
-
-  if (id) {
-    await execute(`UPDATE catering_categories SET name=?, sort_order=? WHERE id=?`, [d.name, d.sortOrder, id]);
-    await audit({ userId: actor.id, action: 'UPDATE', entity: 'catering_category', entityId: id, after: d });
-    refresh();
-    return { ok: true, message: `${d.name} updated.`, id };
-  }
-  const res = await execute(
-    `INSERT INTO catering_categories (name, sort_order, is_active) VALUES (?,?,1)`, [d.name, d.sortOrder],
-  );
-  await audit({ userId: actor.id, action: 'CREATE', entity: 'catering_category', entityId: res.insertId, after: d });
-  refresh();
-  return { ok: true, message: `${d.name} added.`, id: res.insertId };
-}
-
-export async function setCateringCategoryActive(id: number, active: boolean): Promise<CateringResult> {
-  const actor = await assertPermission('catering.manage');
-  await execute(`UPDATE catering_categories SET is_active = ? WHERE id = ?`, [active ? 1 : 0, id]);
-  await audit({ userId: actor.id, action: 'STATUS', entity: 'catering_category', entityId: id, after: { active } });
-  refresh();
-  return { ok: true, message: active ? 'Category restored.' : 'Category archived.' };
-}
-
-export async function deleteCateringCategory(id: number): Promise<CateringResult> {
-  const actor = await assertPermission('catering.manage');
-  const used = await queryOne<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM catering_menu_item_categories WHERE category_id = ?`, [id],
-  );
-  if (Number(used?.n ?? 0) > 0) {
-    return { ok: false, error: 'Dishes are priced under this category — archive it instead of deleting.' };
-  }
-  await execute(`DELETE FROM catering_categories WHERE id = ?`, [id]);
-  await audit({ userId: actor.id, action: 'DELETE', entity: 'catering_category', entityId: id });
-  refresh();
-  return { ok: true, message: 'Category deleted.' };
-}
-
-// ═══════════════════════════════════════════════════════════════
 // Menu
 // ═══════════════════════════════════════════════════════════════
 
@@ -147,13 +91,8 @@ const menuSchema = z.object({
   // The unit the RATE is quoted in. A line may be ordered in a smaller unit
   // (GRAM, ML) and is converted before the amount is worked out.
   unit: z.enum(['KG', 'LITRE', 'PCS', 'PLATE']),
-  defaultRate: money,
+  rate: money,
   sortOrder: z.number().int().min(0).max(9999).default(0),
-  /** One priced variant per category — QORMA sells as BEEF and as CHICKEN. */
-  variants: z.array(z.object({
-    categoryId: z.number().int().positive(),
-    rate: money,
-  })).default([]),
 });
 
 export async function saveCateringMenuItem(id: number | null, input: unknown): Promise<CateringResult> {
@@ -167,40 +106,20 @@ export async function saveCateringMenuItem(id: number | null, input: unknown): P
   );
   if (clash) return { ok: false, error: `"${d.name}" is already on the menu.` };
 
-  // A duplicate category inside one dish would violate the unique key as a raw
-  // SQL error, so it is caught here and reported as something actionable.
-  const seen = new Set<number>();
-  for (const v of d.variants) {
-    if (seen.has(v.categoryId)) return { ok: false, error: 'The same category is listed twice on this dish.' };
-    seen.add(v.categoryId);
-  }
-
   try {
-    const itemId = await withTransaction(async (tx) => {
-      let out = id;
-      if (out) {
-        await tx.execute(
-          `UPDATE catering_menu_items SET name=?, unit=?, default_rate=?, sort_order=? WHERE id=?`,
-          [d.name, d.unit, d.defaultRate, d.sortOrder, out],
-        );
-        // Variants are replaced wholesale — the editor posts the full set.
-        await tx.execute(`DELETE FROM catering_menu_item_categories WHERE menu_item_id = ?`, [out]);
-      } else {
-        const res = await tx.execute(
-          `INSERT INTO catering_menu_items (name, category, unit, default_rate, sort_order, is_active)
-           VALUES (?,'',?,?,?,1)`,
-          [d.name, d.unit, d.defaultRate, d.sortOrder],
-        );
-        out = res.insertId;
-      }
-      for (const v of d.variants) {
-        await tx.execute(
-          `INSERT INTO catering_menu_item_categories (menu_item_id, category_id, rate, is_active) VALUES (?,?,?,1)`,
-          [out, v.categoryId, v.rate],
-        );
-      }
-      return out!;
-    });
+    let itemId = id;
+    if (itemId) {
+      await execute(
+        `UPDATE catering_menu_items SET name=?, unit=?, rate=?, sort_order=? WHERE id=?`,
+        [d.name, d.unit, d.rate, d.sortOrder, itemId],
+      );
+    } else {
+      const res = await execute(
+        `INSERT INTO catering_menu_items (name, unit, rate, sort_order, is_active) VALUES (?,?,?,?,1)`,
+        [d.name, d.unit, d.rate, d.sortOrder],
+      );
+      itemId = res.insertId;
+    }
     await audit({ userId: actor.id, action: id ? 'UPDATE' : 'CREATE', entity: 'catering_menu_item', entityId: itemId, after: d });
     refresh();
     return { ok: true, message: id ? `${d.name} updated.` : `${d.name} added to the menu.`, id: itemId };
@@ -239,13 +158,11 @@ const lineSchema = z.object({
   section: z.enum(['DISH', 'CHARGE']),
   menuItemId: z.number().int().positive().nullable().optional(),
   description: z.string().trim().min(1, 'Every line needs a description').max(200),
-  category: z.string().trim().max(60).default(''),
-  categoryId: z.number().int().positive().nullable().optional(),
   qty: z.number().min(0).max(9999999).default(0),
   // Every unit a LINE can be ordered in, PLATE included. This is the schema a
   // quotation and a template both validate against, so a per-plate dish that
   // the menu allows must be accepted here too.
-  unit: z.enum(['KG', 'GRAM', 'LITRE', 'ML', 'PCS', 'PLATE']).default('KG'),
+  unit: z.enum(CATERING_UNITS).default('KG'),
   rate: money.default(0),
   // A CHARGE line (TRANSPORT, SERVICE) carries an amount with no qty or rate,
   // so the amount is taken as given rather than derived.
@@ -368,9 +285,9 @@ export async function saveCateringQuotation(id: number | null, input: unknown): 
       for (const l of lines) {
         await tx.execute(
           `INSERT INTO catering_quotation_items
-             (quotation_id, section, menu_item_id, description, category, category_id, qty, unit, rate, amount, sort_order)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-          [out, l.section, l.menuItemId ?? null, l.description, l.category, l.categoryId ?? null,
+             (quotation_id, section, menu_item_id, description, qty, unit, rate, amount, sort_order)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+          [out, l.section, l.menuItemId ?? null, l.description,
            l.qty, l.unit, l.rate, l.amount, n++],
         );
       }
@@ -495,8 +412,7 @@ const profileSchema = z.object({
   person: z.string().trim().max(120).default(''),
   phone: z.string().trim().max(60).default(''),
   address: z.string().trim().max(400).default(''),
-  terms: z.string().trim().max(500).default(''),
-  note: z.string().trim().max(1000).default(''),
+  showTerms: z.boolean().default(false),
   // Short by design: it prints as a chip in the slip header, not a paragraph.
   taxNote: z.string().trim().max(120).default(''),
   quotaPrefix: z.string().trim().regex(/^[A-Za-z]{1,6}$/, 'Prefix must be 1–6 letters').default('SC'),
@@ -513,8 +429,7 @@ export async function saveCateringProfile(input: unknown): Promise<CateringResul
     ['catering.person', d.person],
     ['catering.phone', d.phone],
     ['catering.address', d.address],
-    ['catering.terms', d.terms],
-    ['catering.note', d.note],
+    ['catering.show_terms', d.showTerms ? '1' : '0'],
     ['catering.tax_note', d.taxNote],
     ['catering.quota_prefix', d.quotaPrefix.toUpperCase()],
   ];
@@ -673,9 +588,9 @@ export async function createInvoiceFromQuotation(quotationId: number): Promise<C
       // Its own copy of the lines: the whole point of a separate record.
       await tx.execute(
         `INSERT INTO catering_quotation_items
-           (quotation_id, section, menu_item_id, description, category, category_id,
+           (quotation_id, section, menu_item_id, description,
             qty, unit, rate, amount, sort_order)
-         SELECT ?, section, menu_item_id, description, category, category_id,
+         SELECT ?, section, menu_item_id, description,
                 qty, unit, rate, amount, sort_order
            FROM catering_quotation_items WHERE quotation_id = ?`,
         [res.insertId, quotationId],
@@ -900,9 +815,9 @@ export async function saveCateringTemplate(id: number | null, input: unknown): P
         const amount = l.section === 'CHARGE' ? l.amount : cateringLineAmount(l.qty, l.unit as CateringUnit, l.rate);
         await tx.execute(
           `INSERT INTO catering_template_items
-             (template_id, section, menu_item_id, description, category, category_id, qty, unit, rate, amount, sort_order)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-          [out, l.section, l.menuItemId ?? null, l.description, l.category ?? '', l.categoryId ?? null,
+             (template_id, section, menu_item_id, description, qty, unit, rate, amount, sort_order)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+          [out, l.section, l.menuItemId ?? null, l.description,
            l.qty, l.unit, l.rate, amount, n++],
         );
       }
@@ -967,8 +882,8 @@ export async function createTemplateFromQuotation(quotationId: number, name: str
 
       await tx.execute(
         `INSERT INTO catering_template_items
-           (template_id, section, menu_item_id, description, category, category_id, qty, unit, rate, amount, sort_order)
-         SELECT ?, section, menu_item_id, description, category, category_id, qty, unit, rate, amount, sort_order
+           (template_id, section, menu_item_id, description, qty, unit, rate, amount, sort_order)
+         SELECT ?, section, menu_item_id, description, qty, unit, rate, amount, sort_order
            FROM catering_quotation_items WHERE quotation_id = ?`,
         [res.insertId, quotationId],
       );
@@ -984,4 +899,502 @@ export async function createTemplateFromQuotation(quotationId: number, name: str
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Could not save the template.' };
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Receivables & expenses
+// ═══════════════════════════════════════════════════════════════
+
+function refreshMoney() {
+  revalidatePath('/catering/receivables');
+  revalidatePath('/catering/payables');
+  revalidatePath('/catering/reports');
+  revalidatePath('/print/catering-report');
+}
+
+/**
+ * The invoice header only: who owes it, how much, and when it was raised.
+ * `amount` is the TOTAL — installments against it go through
+ * `recordCateringReceivablePayment`, never through here.
+ */
+const receivableSchema = z.object({
+  payerName: z.string().trim().min(1, 'Who owes this?').max(160),
+  amount: z.number().positive('Enter an amount greater than zero').max(999999999),
+  receivedDate: isoDate,
+  note: z.string().trim().max(500).default(''),
+});
+
+export async function saveCateringReceivable(id: number | null, input: unknown): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const parsed = receivableSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.errors[0].message };
+  const d = parsed.data;
+
+  if (id) {
+    const before = await queryOne<{ payer_name: string; paid_amount: number }>(`SELECT * FROM catering_receivables WHERE id = ?`, [id]);
+    if (!before) return { ok: false, error: 'That entry no longer exists.' };
+    // The total can be corrected, but never below what has already come in —
+    // that would leave paid_amount exceeding amount and the balance negative.
+    if (d.amount < Number(before.paid_amount) - 0.01) {
+      return { ok: false, error: `Already paid ${Number(before.paid_amount).toLocaleString()} against this — the total can't go below that.` };
+    }
+    await execute(
+      `UPDATE catering_receivables SET payer_name=?, amount=?, received_date=?, note=? WHERE id=?`,
+      [d.payerName, d.amount, d.receivedDate, d.note, id],
+    );
+    await audit({ userId: actor.id, action: 'UPDATE', entity: 'catering_receivable', entityId: id, before, after: d });
+    refreshMoney();
+    return { ok: true, message: 'Updated.', id };
+  }
+
+  const res = await execute(
+    `INSERT INTO catering_receivables (payer_name, amount, received_date, status, note, created_by) VALUES (?,?,?,'PENDING',?,?)`,
+    [d.payerName, d.amount, d.receivedDate, d.note, actor.id],
+  );
+  await audit({ userId: actor.id, action: 'CREATE', entity: 'catering_receivable', entityId: res.insertId, after: d });
+  refreshMoney();
+  return { ok: true, message: 'Recorded.', id: res.insertId };
+}
+
+const addAmountSchema = z.object({
+  amount: z.number().positive('Enter an amount greater than zero').max(999999999),
+  note: z.string().trim().max(200).optional().nullable(),
+});
+
+/**
+ * Increases the TOTAL owed on an existing receivable — the father who said
+ * 50,000 and later adds another 20,000, without opening a second, unrelated
+ * entry for the same person. Distinct from editing: editing corrects a
+ * mistake in the number already there, this adds a new charge on top of it,
+ * and leaves a dated line in the note so the growth has a paper trail even
+ * though there is no separate ledger table for it the way payments have.
+ *
+ * A total that grows past what has already been paid naturally reopens the
+ * balance — RECEIVED can fall back to PARTIAL, which is exactly right: the
+ * debt is bigger now, so more of it is unpaid again.
+ */
+export async function addCateringReceivableAmount(id: number, input: unknown): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const parsed = addAmountSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.errors[0].message };
+  const d = parsed.data;
+
+  const before = await queryOne<{ amount: number; paid_amount: number; note: string; payer_name: string }>(
+    `SELECT amount, paid_amount, note, payer_name FROM catering_receivables WHERE id = ?`, [id],
+  );
+  if (!before) return { ok: false, error: 'That entry no longer exists.' };
+
+  const newAmount = Number(before.amount) + d.amount;
+  const paid = Number(before.paid_amount);
+  const status = paid >= newAmount ? 'RECEIVED' : paid > 0 ? 'PARTIAL' : 'PENDING';
+
+  const line = `[+${fmtMoney(d.amount)} added ${fmtDate(new Date().toISOString())}]${d.note ? ` ${d.note}` : ''}`;
+  const newNote = before.note ? `${before.note}\n${line}` : line;
+
+  await execute(
+    `UPDATE catering_receivables SET amount = ?, status = ?, note = ? WHERE id = ?`,
+    [newAmount, status, newNote, id],
+  );
+  await audit({
+    userId: actor.id, action: 'ADD_AMOUNT', entity: 'catering_receivable', entityId: id,
+    before: { amount: before.amount }, after: { amount: newAmount, added: d.amount, note: d.note },
+  });
+  refreshMoney();
+  return { ok: true, message: `Added ${fmtMoney(d.amount)} to ${before.payer_name}'s total.` };
+}
+
+const receivablePaymentSchema = z.object({
+  amount: z.number().positive('Enter an amount greater than zero').max(999999999),
+  paymentDate: isoDate,
+  method: z.string().trim().min(1).max(40).default('CASH'),
+  note: z.string().trim().max(255).optional().nullable(),
+});
+
+/**
+ * One installment against a receivable. Mirrors `recordCateringPayment`
+ * exactly: locks the row, rejects overpayment, inserts, then RECOMPUTES
+ * paid_amount and status from the ledger rather than incrementing them, so
+ * the roll-up can never drift from the receipts behind it.
+ */
+export async function recordCateringReceivablePayment(receivableId: number, input: unknown): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const parsed = receivablePaymentSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.errors[0].message };
+  const d = parsed.data;
+
+  try {
+    await withTransaction(async (tx) => {
+      const r = await tx.queryOne<any>(`SELECT amount, paid_amount FROM catering_receivables WHERE id = ? FOR UPDATE`, [receivableId]);
+      if (!r) throw new Error('Receivable not found.');
+      const outstanding = Number(r.amount) - Number(r.paid_amount);
+      if (d.amount > outstanding + 0.01) {
+        throw new Error(`That is more than the ${outstanding.toLocaleString()} still outstanding.`);
+      }
+      await tx.execute(
+        `INSERT INTO catering_receivable_payments (receivable_id, amount, payment_date, method, received_by, note)
+         VALUES (?,?,?,?,?,?)`,
+        [receivableId, d.amount, d.paymentDate, d.method, actor.id, d.note || null],
+      );
+      await tx.execute(
+        `UPDATE catering_receivables
+            SET paid_amount = (SELECT COALESCE(SUM(amount),0) FROM catering_receivable_payments WHERE receivable_id = ?),
+                status = CASE
+                  WHEN (SELECT COALESCE(SUM(amount),0) FROM catering_receivable_payments WHERE receivable_id = ?) >= amount THEN 'RECEIVED'
+                  WHEN (SELECT COALESCE(SUM(amount),0) FROM catering_receivable_payments WHERE receivable_id = ?) > 0 THEN 'PARTIAL'
+                  ELSE 'PENDING'
+                END
+          WHERE id = ?`,
+        [receivableId, receivableId, receivableId, receivableId],
+      );
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not record the payment.' };
+  }
+
+  await audit({ userId: actor.id, action: 'PAYMENT', entity: 'catering_receivable', entityId: receivableId, after: d });
+  refreshMoney();
+  return { ok: true, message: 'Payment recorded.' };
+}
+
+export async function deleteCateringReceivablePayment(paymentId: number): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const row = await queryOne<any>(`SELECT * FROM catering_receivable_payments WHERE id = ?`, [paymentId]);
+  if (!row) return { ok: false, error: 'Payment not found.' };
+  const rid = Number(row.receivable_id);
+
+  await withTransaction(async (tx) => {
+    await tx.execute(`DELETE FROM catering_receivable_payments WHERE id = ?`, [paymentId]);
+    await tx.execute(
+      `UPDATE catering_receivables
+          SET paid_amount = (SELECT COALESCE(SUM(amount),0) FROM catering_receivable_payments WHERE receivable_id = ?),
+              status = CASE
+                WHEN (SELECT COALESCE(SUM(amount),0) FROM catering_receivable_payments WHERE receivable_id = ?) >= amount THEN 'RECEIVED'
+                WHEN (SELECT COALESCE(SUM(amount),0) FROM catering_receivable_payments WHERE receivable_id = ?) > 0 THEN 'PARTIAL'
+                ELSE 'PENDING'
+              END
+        WHERE id = ?`,
+      [rid, rid, rid, rid],
+    );
+  });
+
+  await audit({ userId: actor.id, action: 'DELETE', entity: 'catering_receivable_payment', entityId: paymentId, before: row });
+  refreshMoney();
+  return { ok: true, message: 'Payment removed.' };
+}
+
+export async function deleteCateringReceivable(id: number): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const before = await queryOne<{ payer_name: string }>(`SELECT * FROM catering_receivables WHERE id = ?`, [id]);
+  if (!before) return { ok: false, error: 'That entry no longer exists.' };
+  await execute(`DELETE FROM catering_receivables WHERE id = ?`, [id]);
+  await audit({ userId: actor.id, action: 'DELETE', entity: 'catering_receivable', entityId: id, before });
+  refreshMoney();
+  return { ok: true, message: `Entry for ${before.payer_name} deleted.` };
+}
+
+/**
+ * The invoice header only: who it's owed to, how much in total, and when it
+ * was raised. `amount` is the TOTAL — installments against it go through
+ * `recordCateringExpensePayment`, never through here. Mirrors
+ * `receivableSchema` / `saveCateringReceivable` exactly, in the opposite
+ * direction.
+ */
+const expenseSchema = z.object({
+  category: z.string().trim().max(80).default(''),
+  payee: z.string().trim().max(160).default(''),
+  amount: z.number().positive('Enter an amount greater than zero').max(999999999),
+  expenseDate: isoDate,
+  note: z.string().trim().max(500).default(''),
+});
+
+export async function saveCateringExpense(id: number | null, input: unknown): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const parsed = expenseSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.errors[0].message };
+  const d = parsed.data;
+
+  if (id) {
+    const before = await queryOne<{ payee: string; paid_amount: number }>(`SELECT * FROM catering_expenses WHERE id = ?`, [id]);
+    if (!before) return { ok: false, error: 'That entry no longer exists.' };
+    if (d.amount < Number(before.paid_amount) - 0.01) {
+      return { ok: false, error: `Already paid ${Number(before.paid_amount).toLocaleString()} against this — the total can't go below that.` };
+    }
+    await execute(
+      `UPDATE catering_expenses SET category=?, payee=?, amount=?, expense_date=?, note=? WHERE id=?`,
+      [d.category, d.payee, d.amount, d.expenseDate, d.note, id],
+    );
+    await audit({ userId: actor.id, action: 'UPDATE', entity: 'catering_expense', entityId: id, before, after: d });
+    refreshMoney();
+    return { ok: true, message: 'Updated.', id };
+  }
+
+  const res = await execute(
+    `INSERT INTO catering_expenses (category, payee, amount, expense_date, status, note, created_by) VALUES (?,?,?,?,'PENDING',?,?)`,
+    [d.category, d.payee, d.amount, d.expenseDate, d.note, actor.id],
+  );
+  await audit({ userId: actor.id, action: 'CREATE', entity: 'catering_expense', entityId: res.insertId, after: d });
+  refreshMoney();
+  return { ok: true, message: 'Recorded.', id: res.insertId };
+}
+
+const expensePaymentSchema = z.object({
+  amount: z.number().positive('Enter an amount greater than zero').max(999999999),
+  paymentDate: isoDate,
+  method: z.string().trim().min(1).max(40).default('CASH'),
+  note: z.string().trim().max(255).optional().nullable(),
+});
+
+/**
+ * One installment paid against a payable. Mirrors
+ * `recordCateringReceivablePayment` exactly: locks the row, rejects
+ * overpayment, inserts, then recomputes paid_amount and status from the
+ * ledger rather than incrementing them.
+ */
+export async function recordCateringExpensePayment(payableId: number, input: unknown): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const parsed = expensePaymentSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.errors[0].message };
+  const d = parsed.data;
+
+  try {
+    await withTransaction(async (tx) => {
+      const r = await tx.queryOne<any>(`SELECT amount, paid_amount FROM catering_expenses WHERE id = ? FOR UPDATE`, [payableId]);
+      if (!r) throw new Error('Payable not found.');
+      const outstanding = Number(r.amount) - Number(r.paid_amount);
+      if (d.amount > outstanding + 0.01) {
+        throw new Error(`That is more than the ${outstanding.toLocaleString()} still outstanding.`);
+      }
+      await tx.execute(
+        `INSERT INTO catering_payable_payments (payable_id, amount, payment_date, method, paid_by, note)
+         VALUES (?,?,?,?,?,?)`,
+        [payableId, d.amount, d.paymentDate, d.method, actor.id, d.note || null],
+      );
+      await tx.execute(
+        `UPDATE catering_expenses
+            SET paid_amount = (SELECT COALESCE(SUM(amount),0) FROM catering_payable_payments WHERE payable_id = ?),
+                status = CASE
+                  WHEN (SELECT COALESCE(SUM(amount),0) FROM catering_payable_payments WHERE payable_id = ?) >= amount THEN 'PAID'
+                  WHEN (SELECT COALESCE(SUM(amount),0) FROM catering_payable_payments WHERE payable_id = ?) > 0 THEN 'PARTIAL'
+                  ELSE 'PENDING'
+                END
+          WHERE id = ?`,
+        [payableId, payableId, payableId, payableId],
+      );
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not record the payment.' };
+  }
+
+  await audit({ userId: actor.id, action: 'PAYMENT', entity: 'catering_expense', entityId: payableId, after: d });
+  refreshMoney();
+  return { ok: true, message: 'Payment recorded.' };
+}
+
+export async function deleteCateringExpensePayment(paymentId: number): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const row = await queryOne<any>(`SELECT * FROM catering_payable_payments WHERE id = ?`, [paymentId]);
+  if (!row) return { ok: false, error: 'Payment not found.' };
+  const pid = Number(row.payable_id);
+
+  await withTransaction(async (tx) => {
+    await tx.execute(`DELETE FROM catering_payable_payments WHERE id = ?`, [paymentId]);
+    await tx.execute(
+      `UPDATE catering_expenses
+          SET paid_amount = (SELECT COALESCE(SUM(amount),0) FROM catering_payable_payments WHERE payable_id = ?),
+              status = CASE
+                WHEN (SELECT COALESCE(SUM(amount),0) FROM catering_payable_payments WHERE payable_id = ?) >= amount THEN 'PAID'
+                WHEN (SELECT COALESCE(SUM(amount),0) FROM catering_payable_payments WHERE payable_id = ?) > 0 THEN 'PARTIAL'
+                ELSE 'PENDING'
+              END
+        WHERE id = ?`,
+      [pid, pid, pid, pid],
+    );
+  });
+
+  await audit({ userId: actor.id, action: 'DELETE', entity: 'catering_payable_payment', entityId: paymentId, before: row });
+  refreshMoney();
+  return { ok: true, message: 'Payment removed.' };
+}
+
+const addExpenseAmountSchema = z.object({
+  amount: z.number().positive('Enter an amount greater than zero').max(999999999),
+  note: z.string().trim().max(200).optional().nullable(),
+});
+
+/**
+ * Increases the TOTAL owed on an existing payable — a bill that turns out to
+ * be more than first recorded, an extra charge added on top. Mirrors
+ * `addCateringReceivableAmount` exactly. A total that grows past what has
+ * already been paid naturally reopens the balance: PAID can fall back to
+ * PARTIAL, which is correct — the debt is bigger now.
+ */
+export async function addCateringExpenseAmount(id: number, input: unknown): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const parsed = addExpenseAmountSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.errors[0].message };
+  const d = parsed.data;
+
+  const before = await queryOne<{ amount: number; paid_amount: number; note: string; payee: string }>(
+    `SELECT amount, paid_amount, note, payee FROM catering_expenses WHERE id = ?`, [id],
+  );
+  if (!before) return { ok: false, error: 'That entry no longer exists.' };
+
+  const newAmount = Number(before.amount) + d.amount;
+  const paid = Number(before.paid_amount);
+  const status = paid >= newAmount ? 'PAID' : paid > 0 ? 'PARTIAL' : 'PENDING';
+
+  const line = `[+${fmtMoney(d.amount)} added ${fmtDate(new Date().toISOString())}]${d.note ? ` ${d.note}` : ''}`;
+  const newNote = before.note ? `${before.note}\n${line}` : line;
+
+  await execute(
+    `UPDATE catering_expenses SET amount = ?, status = ?, note = ? WHERE id = ?`,
+    [newAmount, status, newNote, id],
+  );
+  await audit({
+    userId: actor.id, action: 'ADD_AMOUNT', entity: 'catering_expense', entityId: id,
+    before: { amount: before.amount }, after: { amount: newAmount, added: d.amount, note: d.note },
+  });
+  refreshMoney();
+  return { ok: true, message: `Added ${fmtMoney(d.amount)} to the ${before.payee || 'payable'} total.` };
+}
+
+export async function deleteCateringExpense(id: number): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const before = await queryOne<{ payee: string; category: string }>(`SELECT * FROM catering_expenses WHERE id = ?`, [id]);
+  if (!before) return { ok: false, error: 'That entry no longer exists.' };
+  await execute(`DELETE FROM catering_expenses WHERE id = ?`, [id]);
+  await audit({ userId: actor.id, action: 'DELETE', entity: 'catering_expense', entityId: id, before });
+  refreshMoney();
+  return { ok: true, message: `Payable deleted.` };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Custom bills
+// ═══════════════════════════════════════════════════════════════
+
+function refreshCustomBills(id?: number) {
+  revalidatePath('/catering/custom-bills');
+  if (id) revalidatePath(`/catering/custom-bills/${id}`);
+}
+
+/** Same seed-from-the-highest-existing trick as `nextQuotaNo`. */
+async function nextBillNo(tx: {
+  queryOne: <R>(sql: string, p?: unknown[]) => Promise<R | null>;
+  execute: (sql: string, p?: unknown[]) => Promise<unknown>;
+}): Promise<string> {
+  const prefixRow = await tx.queryOne<{ value: string }>(
+    "SELECT `value` FROM settings WHERE `key` = 'catering.bill_prefix'",
+  );
+  const prefix = (prefixRow?.value || 'CB').trim();
+  const key = `catering.bill_seq.${prefix}`;
+
+  const seeded = await tx.queryOne<{ n: number | string }>(
+    `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(bill_no, '-', -1) AS UNSIGNED)), 0) AS n
+       FROM catering_custom_bills WHERE bill_no LIKE ?`,
+    [`${prefix}-%`],
+  );
+  const floor = Number(seeded?.n ?? 0);
+
+  await tx.execute(
+    `INSERT INTO settings (\`key\`, \`value\`) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE \`value\` = GREATEST(CAST(\`value\` AS UNSIGNED), ?) + 1`,
+    [key, String(floor + 1), floor],
+  );
+  const row = await tx.queryOne<{ value: string }>("SELECT `value` FROM settings WHERE `key` = ?", [key]);
+  return `${prefix}-${Number(row?.value ?? floor + 1)}`;
+}
+
+const customBillItemSchema = z.object({
+  section: z.enum(['DISH', 'CHARGE']).default('DISH'),
+  description: z.string().trim().max(300),
+  qty: z.number().min(0).max(999999).default(0),
+  unit: z.enum(CATERING_UNITS).default('KG'),
+  rate: z.number().min(0).max(999999999).default(0),
+  /** Only read for CHARGE lines; a DISH line's amount is always recomputed. */
+  amount: z.number().min(0).max(999999999).default(0),
+});
+
+const customBillSchema = z.object({
+  billTo: z.string().trim().min(1, 'Who is this bill for?').max(160),
+  contactNo: z.string().trim().max(40).default(''),
+  address: z.string().trim().max(300).default(''),
+  billDate: isoDate,
+  note: z.string().trim().max(1000).default(''),
+  items: z.array(customBillItemSchema).default([]),
+});
+
+/**
+ * A bill with no dish behind it. Every line is shaped like a quotation's DISH
+ * row — description, qty, unit, rate — but nothing is priced from
+ * the menu: there is no menu item to look up, so the operator
+ * types the whole thing and `amount` is worked out the same way a quotation
+ * line's is, via `cateringLineAmount`.
+ */
+export async function saveCateringCustomBill(id: number | null, input: unknown): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const parsed = customBillSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.errors[0].message };
+  const d = parsed.data;
+
+  const items = d.items
+    .filter((it) => it.description.trim())
+    // A CHARGE is the amount as typed and carries no qty or rate; a DISH is
+    // always recomputed here rather than trusted from the browser.
+    .map((it) => (it.section === 'CHARGE'
+      ? { ...it, qty: 0, rate: 0 }
+      : { ...it, amount: cateringLineAmount(it.qty, it.unit as CateringUnit, it.rate) }));
+  const grandTotal = items.reduce((s, it) => s + it.amount, 0);
+
+  try {
+    const billId = await withTransaction(async (tx) => {
+      let out = id;
+      if (out) {
+        const before = await tx.queryOne<any>(`SELECT * FROM catering_custom_bills WHERE id = ?`, [out]);
+        if (!before) throw new Error('Bill not found.');
+        await tx.execute(
+          `UPDATE catering_custom_bills SET bill_to=?, contact_no=?, address=?, bill_date=?, grand_total=?, note=? WHERE id=?`,
+          [d.billTo, d.contactNo, d.address, d.billDate, grandTotal, d.note, out],
+        );
+        // Lines are replaced wholesale — the editor always posts the full set.
+        await tx.execute(`DELETE FROM catering_custom_bill_items WHERE bill_id = ?`, [out]);
+      } else {
+        const billNo = await nextBillNo(tx);
+        const res = await tx.execute(
+          `INSERT INTO catering_custom_bills (bill_no, bill_to, contact_no, address, bill_date, grand_total, note, created_by)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [billNo, d.billTo, d.contactNo, d.address, d.billDate, grandTotal, d.note, actor.id],
+        ) as { insertId: number };
+        out = res.insertId;
+      }
+
+      let n = 0;
+      for (const it of items) {
+        await tx.execute(
+          `INSERT INTO catering_custom_bill_items (bill_id, section, description, qty, unit, rate, amount, sort_order) VALUES (?,?,?,?,?,?,?,?)`,
+          [out, it.section, it.description.trim(), it.qty, it.unit, it.rate, it.amount, n++],
+        );
+      }
+      return out!;
+    });
+
+    await audit({
+      userId: actor.id, action: id ? 'UPDATE' : 'CREATE', entity: 'catering_custom_bill', entityId: billId,
+      after: { ...d, grandTotal },
+    });
+    refreshCustomBills(billId);
+    return { ok: true, message: id ? 'Bill updated.' : 'Bill created.', id: billId };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not save the bill.' };
+  }
+}
+
+export async function deleteCateringCustomBill(id: number): Promise<CateringResult> {
+  const actor = await assertPermission('catering.manage');
+  const before = await queryOne<{ bill_no: string }>(`SELECT * FROM catering_custom_bills WHERE id = ?`, [id]);
+  if (!before) return { ok: false, error: 'That bill no longer exists.' };
+  // Lines follow via ON DELETE CASCADE.
+  await execute(`DELETE FROM catering_custom_bills WHERE id = ?`, [id]);
+  await audit({ userId: actor.id, action: 'DELETE', entity: 'catering_custom_bill', entityId: id, before });
+  refreshCustomBills();
+  return { ok: true, message: `${before.bill_no} deleted.` };
 }

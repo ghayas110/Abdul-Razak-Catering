@@ -14,21 +14,31 @@ import type { SitePhoto } from '@/lib/site-photos';
 export function Photo({
   photo, className, priority, sizes,
 }: { photo: SitePhoto; className?: string; priority?: boolean; sizes?: string }) {
+  // Every photo is written as WebP alongside its JPEG by `npm run photos`.
+  // Offering it first cuts roughly a third off what a visitor downloads, and
+  // any browser that does not understand the <source> simply takes the <img>.
+  const webp = photo.src.replace(/\.jpe?g$/i, '.webp');
+
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={photo.src}
-      alt={photo.alt}
-      width={photo.width}
-      height={photo.height}
-      sizes={sizes}
-      // The hero image is the largest-contentful paint, so it must not wait
-      // for the lazy-loading observer.
-      loading={priority ? 'eager' : 'lazy'}
-      fetchPriority={priority ? 'high' : undefined}
-      decoding="async"
-      draggable={false}
-      className={cn('h-full w-full object-cover', className)}
-    />
+    // `contents` keeps <picture> out of the layout entirely, so the <img>
+    // below still fills the slot its parent sized for it.
+    <picture className="contents">
+      <source type="image/webp" srcSet={webp} sizes={sizes} />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={photo.src}
+        alt={photo.alt}
+        width={photo.width}
+        height={photo.height}
+        sizes={sizes}
+        // The hero image is the largest-contentful paint, so it must not wait
+        // for the lazy-loading observer.
+        loading={priority ? 'eager' : 'lazy'}
+        fetchPriority={priority ? 'high' : undefined}
+        decoding="async"
+        draggable={false}
+        className={cn('h-full w-full object-cover', className)}
+      />
+    </picture>
   );
 }

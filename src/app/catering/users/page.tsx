@@ -4,7 +4,7 @@ import { resolvePermissions } from '@/lib/permissions';
 import { ALL_ROLES, type UserRow } from '@/lib/types';
 import { UsersClient } from './users-client';
 
-export const metadata = { title: 'Users — Abdul Razak Catering' };
+export const metadata = { title: 'Users — Abdul Razzak Catering' };
 
 export default async function UsersPage() {
   await requirePermission('users.manage');

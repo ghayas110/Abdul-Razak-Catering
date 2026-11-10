@@ -78,7 +78,7 @@ export function InstallPrompt() {
       <div className="flex items-start gap-3">
         <Download className="mt-0.5 h-5 w-5 shrink-0 text-gold" />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-[rgb(var(--text))]">Install Abdul Razak</div>
+          <div className="text-sm font-medium text-[rgb(var(--text))]">Install Abdul Razzak Catering</div>
           <p className="mt-0.5 text-xs text-[rgb(var(--text-muted))]">
             Add it to your home screen for full-screen, app-like access.
           </p>

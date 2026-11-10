@@ -140,6 +140,45 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   );
 }
 
+/**
+ * A confirmation, in the app's own visual language instead of the browser's
+ * native `confirm()` — which looks like an OS dialog, blocks the render
+ * thread while it's up, and can't be styled, positioned, or made to match a
+ * theme. Delete actions across the portal use this instead.
+ *
+ * Deliberately not a promise-based `useConfirm()` hook: every call site here
+ * already tracks "which row is pending confirmation" in its own state (it
+ * needs that row for the delete call anyway), so a controlled open/onConfirm
+ * pair is less machinery than threading a promise through a transition.
+ */
+export function ConfirmModal({
+  open, title, message, confirmLabel = 'Delete', danger = true, pending, onConfirm, onCancel,
+}: {
+  open: boolean;
+  title: string;
+  message: React.ReactNode;
+  confirmLabel?: string;
+  /** Red confirm button for a destructive action; gold for anything else. */
+  danger?: boolean;
+  pending?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal open={open} onClose={onCancel} title={title}>
+      <div className="space-y-5">
+        <p className="text-sm leading-relaxed text-[rgb(var(--text-muted))]">{message}</p>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel} disabled={pending}>Cancel</Button>
+          <Button variant={danger ? 'danger' : 'gold'} onClick={onConfirm} disabled={pending}>
+            {pending ? 'Working…' : confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Toggle (crisp iOS-style switch) ────────────────────
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (

@@ -1,5 +1,5 @@
 import { requirePermission } from '@/lib/session';
-import { getCateringReport, getCateringProfile } from '@/lib/catering';
+import { getCateringReport, getCateringProfile, getCateringReceivablesTotal, getCateringExpensesTotal } from '@/lib/catering';
 import { getBrand, getDefaultPeriod } from '@/lib/data';
 import { resolvePeriod, monthRange, monthLabelFull } from '@/lib/format';
 import { PrintShell } from '@/components/print/print-shell';
@@ -16,15 +16,17 @@ export default async function CateringReportPrint({
   const { year, month } = resolvePeriod(sp, await getDefaultPeriod());
   const { from, to } = monthRange(year, month);
 
-  const [report, profile, brand] = await Promise.all([
+  const [report, profile, brand, receivableTotal, expenseTotal] = await Promise.all([
     getCateringReport(from, to, monthLabelFull(year, month)),
     getCateringProfile(),
     getBrand(),
+    getCateringReceivablesTotal(from, to),
+    getCateringExpensesTotal(from, to),
   ]);
 
   return (
     <PrintShell backHref={`/catering/reports?year=${year}&month=${month}`}>
-      <CateringReportDoc r={report} p={profile} brand={brand} />
+      <CateringReportDoc r={report} p={profile} brand={brand} receivableTotal={receivableTotal} expenseTotal={expenseTotal} />
     </PrintShell>
   );
 }

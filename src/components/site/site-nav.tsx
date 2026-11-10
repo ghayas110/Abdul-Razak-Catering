@@ -47,8 +47,8 @@ export function SiteNav() {
       )}
     >
       <div className="mx-auto flex h-[68px] max-w-[1200px] items-center justify-between gap-6 px-4 sm:px-6">
-        <Link href="/" aria-label="Abdul Razak Catering, home">
-          <BrandLockup name="Abdul Razak" sub="Catering Service" />
+        <Link href="/" aria-label="Abdul Razzak Catering, home">
+          <BrandLockup name="Abdul Razzak Catering" />
         </Link>
 
         <nav className="hidden items-center gap-8 md:flex">

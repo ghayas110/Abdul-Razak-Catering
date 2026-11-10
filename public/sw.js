@@ -11,14 +11,23 @@
 
 // Bump this on every release that changes caching behaviour — `activate`
 // deletes every cache that doesn't start with the current VERSION.
-const VERSION = 'arc-v1';
+//
+// Bumped to v2 with the icon move: /icons/ is served cache-first below, so
+// every install that had already cached the old mark would have kept serving
+// it out of this cache no matter what the HTML asked for. Dropping the old
+// cache is half of the icon fix; the versioned icon folder is the other half
+// (see src/lib/icons.ts).
+const VERSION = 'arc-v2';
 const STATIC_CACHE = `${VERSION}-static`;
 const OFFLINE_URL = '/offline';
 
+// Keep in step with ICON_VERSION in src/lib/icons.ts.
+const ICONS = '/icons/v3';
+
 const PRECACHE = [
   OFFLINE_URL,
-  '/icons/icon-192.png?v=2',
-  '/icons/icon-512.png?v=2',
+  `${ICONS}/icon-192.png`,
+  `${ICONS}/icon-512.png`,
 ];
 
 self.addEventListener('install', (event) => {
@@ -56,6 +65,10 @@ self.addEventListener('fetch', (event) => {
   const isStatic =
     url.pathname.startsWith('/_next/static/') ||
     url.pathname.startsWith('/icons/') ||
+    // The site photography: about a megabyte of it, on the most-visited page.
+    // Cached here so a repeat visit does not pull it through the Node process
+    // again.
+    url.pathname.startsWith('/photos/') ||
     url.pathname.startsWith('/hero/');
 
   if (isStatic) {
@@ -108,8 +121,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     Promise.all([ping, self.registration.showNotification(data.title, {
       body: data.body,
-      icon: '/icons/icon-192.png?v=2',
-      badge: '/icons/icon-192.png?v=2',
+      icon: `${ICONS}/icon-192.png`,
+      badge: `${ICONS}/icon-192.png`,
       // Same tag replaces an earlier alert for the same booking instead of
       // stacking duplicates.
       tag: data.tag,

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { requirePermission } from '@/lib/session';
 import {
   getCateringSummary, getCateringTrend, getCateringDishMix, getCateringQuotations,
+  getCateringReport, getCateringReceivablesTotal, getCateringExpensesTotal,
 } from '@/lib/catering';
 import { getDefaultPeriod } from '@/lib/data';
 import { monthRange, monthLabelFull, fmtMoney, fmtDate } from '@/lib/format';
@@ -10,7 +11,7 @@ import { StatTile } from '@/components/stat-tile';
 import { PeriodPicker } from '@/components/period-picker';
 import { RevenueTrend } from '@/components/charts';
 import { CATERING_STATUS_META } from '@/lib/types';
-import { Printer, CircleDollarSign, TrendingUp, Users, FileText } from 'lucide-react';
+import { Printer, CircleDollarSign, TrendingUp, Users, FileText, Wallet } from 'lucide-react';
 
 export const metadata = { title: 'Reports — Catering' };
 export const dynamic = 'force-dynamic';
@@ -25,12 +26,22 @@ export default async function CateringReportsPage({
   const month = Number(sp.m) || def.month;
   const { from, to } = monthRange(year, month);
 
-  const [summary, trend, mix, delivered] = await Promise.all([
+  const [summary, trend, mix, delivered, report, receivableTotal, expenseTotal] = await Promise.all([
     getCateringSummary(from, to),
     getCateringTrend(year, month, 12),
     getCateringDishMix(from, to, 20),
     getCateringQuotations({ from, to, status: 'ALL', limit: 200 }),
+    // Same query the printed report runs, so the on-screen Profit tile and
+    // the PDF can never disagree.
+    getCateringReport(from, to, monthLabelFull(year, month)),
+    getCateringReceivablesTotal(from, to),
+    getCateringExpensesTotal(from, to),
   ]);
+
+  // Event profit (revenue less vendor cost) plus whatever came in outside a
+  // quotation, less whatever went out that wasn't a vendor bill. See the note
+  // on `getCateringReceivablesTotal` / `getCateringExpensesTotal`.
+  const profit = report.totals.profit + receivableTotal - expenseTotal;
 
   const billable = delivered.filter((q) => q.status === 'CONFIRMED' || q.status === 'COMPLETED');
 
@@ -54,11 +65,27 @@ export default async function CateringReportsPage({
         Reports
       </SectionTitle>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatTile label="Revenue" value={summary.revenue} icon={<CircleDollarSign className="h-5 w-5" />} delay={0} sub={`${summary.confirmed} orders`} />
         <StatTile label="Received" value={summary.received} tone="green" icon={<TrendingUp className="h-5 w-5" />} delay={0.05} />
         <StatTile label="Outstanding" value={summary.outstanding} tone={summary.outstanding > 0 ? 'red' : 'green'} icon={<FileText className="h-5 w-5" />} delay={0.1} />
         <StatTile label="Persons" value={summary.persons} format="int" tone="plain" icon={<Users className="h-5 w-5" />} delay={0.15} sub={`${fmtMoney(summary.avgPerOrder)} average`} />
+        <StatTile
+          label="Profit"
+          value={profit}
+          tone={profit >= 0 ? 'green' : 'red'}
+          icon={<Wallet className="h-5 w-5" />}
+          delay={0.2}
+          sub={
+            receivableTotal > 0 && expenseTotal > 0
+              ? `+${fmtMoney(receivableTotal, false)} receivable, -${fmtMoney(expenseTotal, false)} payables`
+              : receivableTotal > 0
+                ? `Incl. +${fmtMoney(receivableTotal, false)} receivable`
+                : expenseTotal > 0
+                  ? `Incl. -${fmtMoney(expenseTotal, false)} payables`
+                  : 'Event revenue less vendor cost'
+          }
+        />
       </div>
 
       <Card className="p-5">
@@ -80,7 +107,6 @@ export default async function CateringReportsPage({
               <thead>
                 <tr className="border-b border-[rgb(var(--border)/0.6)] text-left text-xs uppercase tracking-wider text-[rgb(var(--text-dim))]">
                   <th className="py-2 pr-3 font-medium">Dish</th>
-                  <th className="py-2 pr-3 font-medium">Category</th>
                   <th className="py-2 pr-3 text-right font-medium">Orders</th>
                   <th className="py-2 pr-3 text-right font-medium">Qty</th>
                   <th className="py-2 text-right font-medium">Revenue</th>
@@ -88,9 +114,8 @@ export default async function CateringReportsPage({
               </thead>
               <tbody>
                 {mix.map((m) => (
-                  <tr key={`${m.description}-${m.category}`} className="border-b border-[rgb(var(--border)/0.3)] last:border-0">
+                  <tr key={m.description} className="border-b border-[rgb(var(--border)/0.3)] last:border-0">
                     <td className="py-2.5 pr-3 text-[rgb(var(--text))]">{m.description}</td>
-                    <td className="py-2.5 pr-3 text-[rgb(var(--text-dim))]">{m.category || '—'}</td>
                     <td className="py-2.5 pr-3 text-right tnum text-[rgb(var(--text-muted))]">{m.orders}</td>
                     <td className="py-2.5 pr-3 text-right tnum text-[rgb(var(--text-muted))]">{m.qty.toLocaleString()}</td>
                     <td className="py-2.5 text-right tnum text-[rgb(var(--text))]">{fmtMoney(m.revenue, false)}</td>

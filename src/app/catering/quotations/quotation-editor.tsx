@@ -8,11 +8,12 @@ import {
 } from '@/components/ui';
 import { DateInput } from '@/components/date-input';
 import { SearchSelect } from '@/components/search-select';
+import { DishCombobox } from '@/components/dish-combobox';
 import { fmtMoney } from '@/lib/format';
 import { saveCateringQuotation, saveCateringTemplate } from '@/lib/actions/catering';
 import {
   CATERING_STATUS_META, UNIT_META, unitsFor, cateringLineAmount,
-  type CateringCategoryRow, type CateringLineRow, type CateringMenuItemRow,
+  type CateringLineRow, type CateringMenuItemRow,
   type CateringQuotationRow, type CateringSection, type CateringStatus, type CateringTemplateRow,
   type CateringUnit,
 } from '@/lib/types';
@@ -23,8 +24,6 @@ type Line = {
   section: CateringSection;
   menuItemId: number | null;
   description: string;
-  category: string;
-  categoryId: number | null;
   qty: string;
   unit: CateringUnit;
   rate: string;
@@ -95,7 +94,7 @@ const fingerprint = (d: Omit<Draft, 'savedAt'>) => JSON.stringify(d);
 const uid = () => Math.random().toString(36).slice(2);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const blank = (section: CateringSection): Line => ({
-  key: uid(), section, menuItemId: null, description: '', category: '', categoryId: null,
+  key: uid(), section, menuItemId: null, description: '',
   qty: '', unit: 'KG', rate: '', amount: '',
 });
 
@@ -124,9 +123,8 @@ const lineTotal = (l: Line) =>
  *      operator picks a dish. Picking QORMA fills the description, the unit and
  *      the rate ONCE; from then on those fields belong to the operator. An
  *      earlier version generated a second "meat supplied" line per dish and
- *      kept it in step with the menu on every render, which meant re-picking a
- *      category silently rewrote rows the operator had already typed. That
- *      whole mechanism is gone.
+ *      kept it in step with the menu on every render, which silently rewrote
+ *      rows the operator had already typed. That whole mechanism is gone.
  *
  *   2. Leaving the page does not lose the form. Every keystroke is mirrored
  *      into sessionStorage, so going to Menu & Rates to change a price and
@@ -135,7 +133,7 @@ const lineTotal = (l: Line) =>
  *      price already given, not a live view of the rate card.
  */
 export function QuotationEditor({
-  quotation, template, mode = 'QUOTATION', presetLines, presetPersons, menu, customers, categories,
+  quotation, template, mode = 'QUOTATION', presetLines, presetPersons, menu, customers,
 }: {
   quotation?: CateringQuotationRow;
   template?: CateringTemplateRow;
@@ -145,7 +143,6 @@ export function QuotationEditor({
   presetPersons?: number;
   menu: CateringMenuItemRow[];
   customers: { id: number; name: string; phone: string }[];
-  categories: CateringCategoryRow[];
 }) {
   const isTemplate = mode === 'TEMPLATE';
   const router = useRouter();
@@ -191,7 +188,7 @@ export function QuotationEditor({
       if (existing.length === 0) return [blank('DISH')];
       return existing.map((l): Line => ({
         key: `l${l.id}`, section: l.section, menuItemId: l.menuItemId,
-        description: l.description, category: l.category, categoryId: l.categoryId,
+        description: l.description,
         qty: l.qty ? String(l.qty) : '', unit: l.unit,
         rate: l.rate ? String(l.rate) : '', amount: l.amount ? String(l.amount) : '',
       }));
@@ -199,34 +196,65 @@ export function QuotationEditor({
   }));
 
   /**
-   * The saved draft, read once on the first render so restoring cannot flash
-   * the empty form first. A draft that matches the stored record exactly is
-   * not a restore — it is the same document — so it is discarded here rather
-   * than announced.
+   * Every field starts from `pristine` — what the server sent — and NOTHING
+   * else, so the very first client render matches the server-rendered HTML
+   * exactly. A saved draft is real, but `sessionStorage` does not exist on the
+   * server: seeding state from it here, during the initial render, made the
+   * client's first paint disagree with the server's and React discarded the
+   * whole tree with a hydration error every time a draft existed — which,
+   * for the one form in this app that is SUPPOSED to carry drafts, was often.
+   *
+   * The draft is instead pulled in by the effect below, which by definition
+   * only ever runs on the client, after hydration has already succeeded.
    */
-  const [draft] = useState(() => {
+  const [restored, setRestored] = useState(false);
+
+  const [templateName, setTemplateName] = useState(pristine.templateName);
+  const [templateDesc, setTemplateDesc] = useState(pristine.templateDesc);
+  const [customerId, setCustomerId] = useState(pristine.customerId);
+  const [customerName, setCustomerName] = useState(pristine.customerName);
+  const [contactNo, setContactNo] = useState(pristine.contactNo);
+  const [placeOfFunction, setPlaceOfFunction] = useState(pristine.placeOfFunction);
+  const [quotationDate, setQuotationDate] = useState(pristine.quotationDate);
+  const [deliveryDate, setDeliveryDate] = useState(pristine.deliveryDate);
+  const [persons, setPersons] = useState(pristine.persons);
+  const [status, setStatus] = useState<CateringStatus>(pristine.status);
+  const [advance, setAdvance] = useState(pristine.advance);
+  const [note, setNote] = useState(pristine.note);
+  const [lines, setLines] = useState<Line[]>(pristine.lines);
+
+  /**
+   * Pull in a saved draft, once, after the page the server sent has already
+   * hydrated. A draft that matches `pristine` exactly is not a restore — it
+   * is the same document — so it is discarded here rather than announced.
+   *
+   * `pristine` is deliberately left out of the dependency list: it is built
+   * once via its own `useState` initializer and never changes for the life of
+   * this component, and re-running this on some later, unrelated render would
+   * re-apply a draft the operator may have already edited past.
+   */
+  useEffect(() => {
     const d = readDraft(scope);
-    if (!d) return null;
+    if (!d) return;
     const { savedAt: _savedAt, ...body } = d;
-    return fingerprint(body) === fingerprint(pristine) ? null : d;
-  });
-  const [restored, setRestored] = useState(() => draft !== null);
+    if (fingerprint(body) === fingerprint(pristine)) return;
 
-  const init = draft ?? pristine;
-
-  const [templateName, setTemplateName] = useState(init.templateName);
-  const [templateDesc, setTemplateDesc] = useState(init.templateDesc);
-  const [customerId, setCustomerId] = useState(init.customerId);
-  const [customerName, setCustomerName] = useState(init.customerName);
-  const [contactNo, setContactNo] = useState(init.contactNo);
-  const [placeOfFunction, setPlaceOfFunction] = useState(init.placeOfFunction);
-  const [quotationDate, setQuotationDate] = useState(init.quotationDate);
-  const [deliveryDate, setDeliveryDate] = useState(init.deliveryDate);
-  const [persons, setPersons] = useState(init.persons);
-  const [status, setStatus] = useState<CateringStatus>(init.status);
-  const [advance, setAdvance] = useState(init.advance);
-  const [note, setNote] = useState(init.note);
-  const [lines, setLines] = useState<Line[]>(init.lines);
+    setRestored(true);
+    setTemplateName(body.templateName);
+    setTemplateDesc(body.templateDesc);
+    setCustomerId(body.customerId);
+    setCustomerName(body.customerName);
+    setContactNo(body.contactNo);
+    setPlaceOfFunction(body.placeOfFunction);
+    setQuotationDate(body.quotationDate);
+    setDeliveryDate(body.deliveryDate);
+    setPersons(body.persons);
+    setStatus(body.status);
+    setAdvance(body.advance);
+    setNote(body.note);
+    setLines(body.lines);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
 
   /**
    * Patch ONE line. Every other line, and every field outside the grid, is
@@ -237,9 +265,7 @@ export function QuotationEditor({
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
   /**
-   * Picking a dish fills the description and unit, and — when the dish sells
-   * under exactly one category — its category and rate too. With several
-   * categories the operator has to choose, because that is what sets the price.
+   * Picking a dish fills the description, the unit and the rate from the menu.
    *
    * This runs on the pick and never again. If Menu & Rates later re-prices the
    * dish, this line keeps the rate that was quoted; the operator re-picks the
@@ -248,47 +274,66 @@ export function QuotationEditor({
   function pickMenu(key: string, id: number | null) {
     const m = menu.find((x) => x.id === id);
     if (!m) { setLine(key, { menuItemId: null }); return; }
-    const only = m.variants.length === 1 ? m.variants[0] : null;
     setLine(key, {
       menuItemId: m.id,
       description: m.name,
       unit: m.unit,
-      categoryId: only ? only.categoryId : null,
-      category: only ? only.categoryName : '',
-      rate: String(only ? only.rate : m.defaultRate),
-    });
-  }
-
-  /** Choosing the category re-prices that line, and only that line. */
-  function pickCategory(key: string, categoryId: number | null) {
-    const l = lines.find((x) => x.key === key);
-    const m = menu.find((x) => x.id === l?.menuItemId);
-    const v = m?.variants.find((x) => x.categoryId === categoryId);
-    const cat = categories.find((c) => c.id === categoryId);
-    setLine(key, {
-      categoryId,
-      category: cat?.name ?? '',
-      ...(v ? { rate: String(v.rate) } : {}),
+      rate: String(m.rate),
     });
   }
 
   const menuOptions = menu.map((m) => ({
     value: m.id,
     label: m.name,
-    sub: m.variants.length ? m.variants.map((v) => v.categoryName).join(' · ') : `per ${UNIT_META[m.unit].label}`,
-    right: m.variants.length === 1 ? fmtMoney(m.variants[0].rate, false) : undefined,
+    sub: `per ${UNIT_META[m.unit].label}`,
+    right: m.rate ? fmtMoney(m.rate, false) : undefined,
   }));
 
-  /** A dish's own categories when it has them, otherwise every active one. */
-  const categoryOptionsFor = (l: Line) => {
-    const m = menu.find((x) => x.id === l.menuItemId);
-    if (m && m.variants.length > 0) {
-      return m.variants.map((v) => ({ value: v.categoryId, label: v.categoryName, right: fmtMoney(v.rate, false) }));
-    }
-    return categories.filter((c) => c.isActive).map((c) => ({ value: c.id, label: c.name }));
+  const customerOptions = customers.map((c) => ({ value: c.id, label: c.name, sub: c.phone || undefined }));
+
+  /**
+   * The units this line may be counted in.
+   *
+   * Its own measure first — a dish priced per kg is nearly always ordered in
+   * kg or g — but every other unit is offered underneath, because a dish's
+   * unit is a decision the kitchen revises. This used to offer the current
+   * measure ALONE, which trapped a per-plate line: PLATE is a count and counts
+   * do not convert, so the list came back holding one entry and the only way
+   * off it was to delete the row.
+   */
+  const unitOptionsFor = (l: Line) => {
+    const own = unitsFor(UNIT_META[l.unit].base);
+    const rest = (Object.keys(UNIT_META) as CateringUnit[]).filter((u) => !own.includes(u));
+    return [...own, ...rest].map((u) => ({ value: u, label: UNIT_META[u].label }));
   };
 
-  const customerOptions = customers.map((c) => ({ value: c.id, label: c.name, sub: c.phone || undefined }));
+  /**
+   * What the menu says about this line TODAY, where that disagrees with the
+   * line itself.
+   *
+   * Nothing here is applied automatically. A quotation is a price already
+   * given, and rewriting one because a rate card moved underneath it is the
+   * behaviour this editor exists to prevent. But the operator who just went to
+   * Menu & Rates, changed a dish from per plate to per kg, and came back needs
+   * to SEE that the line is now out of step and be able to pull the change in
+   * with one click. Silence was the actual complaint.
+   *
+   * Only a change of MEASURE counts as a drifted unit: a line entered in grams
+   * against a per-kg dish is the operator's own choice, not drift.
+   */
+  function menuDrift(l: Line): { unit?: CateringUnit; rate?: string } | null {
+    if (l.section !== 'DISH' || !l.menuItemId) return null;
+    const m = menu.find((x) => x.id === l.menuItemId);
+    if (!m) return null;
+    const current = String(m.rate);
+
+    const out: { unit?: CateringUnit; rate?: string } = {};
+    if (UNIT_META[m.unit].base !== UNIT_META[l.unit].base) out.unit = m.unit;
+    // An untouched rate has nothing to disagree with yet.
+    if (l.rate !== '' && current !== '0' && current !== l.rate) out.rate = current;
+    return out.unit || out.rate ? out : null;
+  }
+
 
   function removeLine(key: string) {
     setLines((ls) => ls.filter((l) => l.key !== key));
@@ -368,8 +413,7 @@ export function QuotationEditor({
             .filter((l) => l.description.trim())
             .map((l) => ({
               section: l.section, menuItemId: l.menuItemId,
-              description: l.description.trim(), category: l.category.trim(),
-              categoryId: l.categoryId,
+              description: l.description.trim(),
               qty: Number(l.qty) || 0, unit: l.unit,
               rate: Number(l.rate) || 0, amount: Number(l.amount) || 0,
             })),
@@ -394,8 +438,7 @@ export function QuotationEditor({
         .filter((l) => l.description.trim())
         .map((l) => ({
           section: l.section, menuItemId: l.menuItemId,
-          description: l.description.trim(), category: l.category.trim(),
-          categoryId: l.categoryId,
+          description: l.description.trim(),
           qty: Number(l.qty) || 0, unit: l.unit,
           rate: Number(l.rate) || 0, amount: Number(l.amount) || 0,
         })),
@@ -533,35 +576,30 @@ export function QuotationEditor({
                           <Input type="number" min="0" value={l.amount} onChange={(e) => setLine(l.key, { amount: e.target.value })} className="text-right" />
                         </div>
                         <button onClick={() => removeLine(l.key)} title="Remove line"
-                          className="mb-1 rounded-lg p-2 text-[rgb(var(--text-dim))] hover:text-negative">
+                          className="mb-1 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-[rgb(var(--text-dim))] hover:text-negative sm:min-h-0 sm:min-w-0 sm:p-2">
                           <X className="h-4 w-4" />
                         </button>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-12 items-end gap-2">
-                        <div className="col-span-12 sm:col-span-3">
+                      <div className="grid grid-cols-12 items-start gap-2">
+                        <div className="col-span-12 sm:col-span-7">
                           <label className="mb-1 block text-[11px] uppercase tracking-wider text-[rgb(var(--text-dim))]">Dish</label>
-                          <SearchSelect
+                          {/* One box: type to search the menu, click a match to
+                              price the line from it, or just keep typing past
+                              the suggestions for a genuine one-off dish. */}
+                          <DishCombobox
                             options={menuOptions}
-                            value={l.menuItemId}
-                            onChange={(v) => pickMenu(l.key, v === null ? null : Number(v))}
-                            placeholder="Search dishes…"
-                            emptyLabel="Custom item"
+                            menuItemId={l.menuItemId}
+                            description={l.description}
+                            onPick={(id) => pickMenu(l.key, id)}
+                            onText={(text) => setLine(l.key, {
+                              description: text,
+                              // Diverging from the picked dish's name un-links
+                              // the line — see the note on `setLine` for why
+                              // rate and unit are deliberately left alone.
+                              ...(l.menuItemId ? { menuItemId: null } : {}),
+                            })}
                           />
-                        </div>
-                        <div className="col-span-12 sm:col-span-3">
-                          <label className="mb-1 block text-[11px] uppercase tracking-wider text-[rgb(var(--text-dim))]">Category</label>
-                          <SearchSelect
-                            options={categoryOptionsFor(l)}
-                            value={l.categoryId}
-                            onChange={(v) => pickCategory(l.key, v === null ? null : Number(v))}
-                            placeholder="Search categories…"
-                            emptyLabel="No category"
-                          />
-                        </div>
-                        <div className="col-span-12 sm:col-span-2">
-                          <label className="mb-1 block text-[11px] uppercase tracking-wider text-[rgb(var(--text-dim))]">Description</label>
-                          <Input value={l.description} onChange={(e) => setLine(l.key, { description: e.target.value })} placeholder="QORMA" />
                         </div>
                         <div className="col-span-4 sm:col-span-1">
                           <label className="mb-1 block text-[11px] uppercase tracking-wider text-[rgb(var(--text-dim))]">Qty</label>
@@ -569,10 +607,8 @@ export function QuotationEditor({
                         </div>
                         <div className="col-span-4 sm:col-span-1">
                           <label className="mb-1 block text-[11px] uppercase tracking-wider text-[rgb(var(--text-dim))]">Unit</label>
-                          {/* Only units measuring the same thing as the rate: a dish
-                              priced per kg can be ordered in kg or g. */}
                           <SearchSelect
-                            options={unitsFor(UNIT_META[l.unit].base).map((u) => ({ value: u, label: UNIT_META[u].label }))}
+                            options={unitOptionsFor(l)}
                             value={l.unit}
                             onChange={(v) => v && setLine(l.key, { unit: v as CateringUnit })}
                             placeholder="Unit…"
@@ -583,16 +619,50 @@ export function QuotationEditor({
                           <label className="mb-1 block text-[11px] uppercase tracking-wider text-[rgb(var(--text-dim))]">Rate</label>
                           <Input type="number" min="0" value={l.rate} onChange={(e) => setLine(l.key, { rate: e.target.value })} />
                         </div>
-                        <div className="col-span-11 sm:col-span-1 text-right">
+                        <div className="col-span-8 sm:col-span-1 text-right">
                           <label className="mb-1 block text-[11px] uppercase tracking-wider text-[rgb(var(--text-dim))]">Amount</label>
                           <span className="tnum inline-block py-2 text-sm text-[rgb(var(--text))]">{fmtMoney(lineTotal(l), false)}</span>
                         </div>
-                        <div className="col-span-1 flex justify-end">
-                          <button onClick={() => removeLine(l.key)} title="Remove line"
-                            className="mb-1 rounded-lg p-2 text-[rgb(var(--text-dim))] hover:text-negative">
-                            <X className="h-4 w-4" />
-                          </button>
+                        {/* On a phone this was a 16px-wide column holding an
+                            icon — impossible to hit with a thumb, and clipped
+                            besides. It gets a quarter of the row and a labelled
+                            44px target there, and stays the bare icon on a
+                            desktop where the column is one twelfth wide. */}
+                        <div className="col-span-4 sm:col-span-1">
+                          <label aria-hidden className="mb-1 block text-[11px] uppercase tracking-wider opacity-0">·</label>
+                          <div className="flex justify-end">
+                            <button onClick={() => removeLine(l.key)} title="Remove line"
+                              className="flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-lg border border-[rgb(var(--border)/0.6)] text-xs font-medium text-[rgb(var(--text-dim))] transition-colors hover:border-negative/40 hover:text-negative sm:min-h-0 sm:w-auto sm:border-0 sm:p-2">
+                              <X className="h-4 w-4" />
+                              <span className="sm:hidden">Remove</span>
+                            </button>
+                          </div>
                         </div>
+
+                        {/* The line is out of step with the rate card. Shown,
+                            never applied on its own — see `menuDrift`. */}
+                        {(() => {
+                          const drift = menuDrift(l);
+                          if (!drift) return null;
+                          const says = [
+                            drift.unit ? `per ${UNIT_META[drift.unit].label}` : null,
+                            drift.rate ? fmtMoney(Number(drift.rate), false) : null,
+                          ].filter(Boolean).join(' at ');
+                          return (
+                            <div className="col-span-12 -mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                              <span className="text-[rgb(var(--text-dim))]">
+                                Menu &amp; Rates now says <span className="text-gold">{says}</span> for this dish.
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setLine(l.key, drift)}
+                                className="rounded-lg border border-[rgb(var(--gold)/0.45)] px-2 py-0.5 font-medium text-gold transition-colors hover:bg-[rgb(var(--gold)/0.12)]"
+                              >
+                                Use it on this line
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>

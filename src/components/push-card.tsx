@@ -163,7 +163,7 @@ export function PushCard() {
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
             <span>
               This browser can&apos;t show notifications. On iPhone and iPad you must first add
-              Abdul Razak Catering Service to the Home Screen (Share → Add to Home Screen) and open it
+              Abdul Razzak Catering to the Home Screen (Share → Add to Home Screen) and open it
               from there.
             </span>
           </div>

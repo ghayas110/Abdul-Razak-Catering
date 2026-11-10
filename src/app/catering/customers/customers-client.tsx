@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, SectionTitle, Button, Field, Input, Textarea, Modal, EmptyState, TableScroll } from '@/components/ui';
+import { Card, SectionTitle, Button, Field, Input, Textarea, Modal, EmptyState, TableScroll, ConfirmModal } from '@/components/ui';
 import { fmtPhone } from '@/lib/format';
 import { saveCateringCustomer, deleteCateringCustomer } from '@/lib/actions/catering';
 import type { CateringCustomerRow } from '@/lib/types';
@@ -20,6 +20,18 @@ export function CustomersClient({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [pending, start] = useTransition();
+  const [deleting, setDeleting] = useState<CateringCustomerRow | null>(null);
+
+  function confirmDelete() {
+    if (!deleting) return;
+    const c = deleting;
+    start(async () => {
+      const res = await deleteCateringCustomer(c.id);
+      setDeleting(null);
+      setNotice(res.ok ? (res.message ?? 'Deleted.') : res.error);
+      router.refresh();
+    });
+  }
 
   function openNew() { setEditing(null); setForm(EMPTY); setError(''); setOpen(true); }
   function openEdit(c: CateringCustomerRow) {
@@ -87,14 +99,7 @@ export function CustomersClient({
                               contact — offered when there is no history to lose. */}
                           {!c.quotationCount && (
                             <button
-                              onClick={() => {
-                                if (!confirm(`Delete ${c.name}?`)) return;
-                                start(async () => {
-                                  const res = await deleteCateringCustomer(c.id);
-                                  setNotice(res.ok ? (res.message ?? 'Deleted.') : res.error);
-                                  router.refresh();
-                                });
-                              }}
+                              onClick={() => setDeleting(c)}
                               disabled={pending} title="Delete"
                               className="rounded-lg p-1.5 text-[rgb(var(--text-muted))] hover:bg-[rgb(var(--surface-2))] hover:text-negative disabled:opacity-40">
                               <Trash2 className="h-4 w-4" />
@@ -127,6 +132,15 @@ export function CustomersClient({
           </div>
         </div>
       </Modal>
+
+      <ConfirmModal
+        open={!!deleting}
+        title="Delete this customer?"
+        message={deleting ? `Delete ${deleting.name}? This can't be undone.` : ''}
+        pending={pending}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleting(null)}
+      />
     </div>
   );
 }

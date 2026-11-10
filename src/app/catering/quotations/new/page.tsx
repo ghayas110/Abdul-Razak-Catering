@@ -1,5 +1,5 @@
 import { requirePermission } from '@/lib/session';
-import { getCateringMenu, getCateringCustomers, getCateringCategories, getCateringTemplate } from '@/lib/catering';
+import { getCateringMenu, getCateringCustomers, getCateringTemplate } from '@/lib/catering';
 import { QuotationEditor } from '../quotation-editor';
 
 export const metadata = { title: 'New Quotation — Catering' };
@@ -11,8 +11,8 @@ export default async function NewCateringQuotation({
   await requirePermission('catering.manage');
   const sp = await searchParams;
 
-  const [menu, customers, categories] = await Promise.all([
-    getCateringMenu(true), getCateringCustomers(), getCateringCategories(false),
+  const [menu, customers] = await Promise.all([
+    getCateringMenu(true), getCateringCustomers(),
   ]);
 
   // ?template=<id> starts the quotation from a saved set of lines. The lines
@@ -29,7 +29,6 @@ export default async function NewCateringQuotation({
       presetPersons={template?.persons}
       menu={menu}
       customers={customers.map((c) => ({ id: c.id, name: c.name, phone: c.phone }))}
-      categories={categories}
     />
   );
 }

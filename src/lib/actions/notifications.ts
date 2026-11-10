@@ -154,7 +154,7 @@ export async function sendTestNotification(): Promise<{ ok: true } | { ok: false
   // everyone else's bell or on their phones.
   const { sendPush } = await import('@/lib/notify');
   await sendPush([user.id], {
-    title: 'Abdul Razak Catering — test alert',
+    title: 'Abdul Razzak Catering — test alert',
     body: 'Notifications are working. New bookings and enquiries will appear like this.',
     url: '/catering',
     tag: 'test',

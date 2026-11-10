@@ -15,7 +15,8 @@ import { assertPermission } from '@/lib/session';
 import { audit } from '@/lib/audit';
 import { getBrand } from '@/lib/data';
 import { brandKey, normaliseBrand, BRAND_DEFAULTS, type BrandInfo } from '@/lib/brand-info';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
+import { BRAND_TAG } from '@/lib/data';
 
 const schema = z.object({
   siteName: z.string().trim().max(160).optional(),
@@ -72,6 +73,9 @@ export async function updateBrand(input: unknown): Promise<BrandResult> {
 
   // Everything that prints or publishes these values.
   revalidatePath('/');
+  // getBrand is cached for an hour; without this a saved change would not
+  // appear on the site or the letterhead until that hour was up.
+  revalidateTag(BRAND_TAG);
   revalidatePath('/catering/settings');
   revalidatePath('/', 'layout');
   revalidatePath('/print', 'layout');
@@ -84,6 +88,9 @@ export async function resetBrand(): Promise<BrandResult> {
   await execute(`DELETE FROM settings WHERE \`key\` LIKE 'brand.%'`);
   await audit({ userId: actor.id, action: 'RESET', entity: 'brand', after: BRAND_DEFAULTS });
   revalidatePath('/');
+  // getBrand is cached for an hour; without this a saved change would not
+  // appear on the site or the letterhead until that hour was up.
+  revalidateTag(BRAND_TAG);
   revalidatePath('/catering/settings');
   revalidatePath('/print', 'layout');
   return { ok: true, message: 'Business profile reset to the original details.' };

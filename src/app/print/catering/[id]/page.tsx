@@ -37,12 +37,14 @@ export default async function CateringPrint({ params }: { params: Promise<{ id: 
           note: q.note,
           docType: q.docType,
           lines: (q.lines ?? []).map((l) => ({
-            section: l.section, description: l.description, category: l.category,
+            section: l.section, description: l.description,
             qty: l.qty, unit: l.unit, rate: l.rate, amount: l.amount,
           })),
         }}
         p={profile}
-        rules={rules.map((r) => r.text)}
+        // Settings decides whether conditions print at all; Rules decides the
+        // wording. Handing over an empty list is what hides the block.
+        rules={profile.showTerms ? rules.map((r) => r.text) : []}
         brand={brand}
       />
     </PrintShell>

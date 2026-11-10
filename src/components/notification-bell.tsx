@@ -6,7 +6,17 @@ import { markRead, markAllRead, type NotificationItem } from '@/lib/actions/noti
 import { Bell, BookMarked, Sparkles, MessageSquareQuote, Wallet, Check } from 'lucide-react';
 
 /** How often the badge is refreshed while the app is open. */
-const POLL_MS = 30_000;
+/**
+ * How often the badge asks the server for a count.
+ *
+ * Every poll is an authenticated request that verifies a session and runs a
+ * COUNT — cheap on its own, but it is on every portal screen, on every open
+ * tab, all day. At 30s a single tab left open for an eight-hour shift was
+ * about a thousand requests; at 90s it is a third of that, and nobody can
+ * tell the difference for a notification badge. Polling already stops while
+ * the tab is hidden, and a push wakes it immediately.
+ */
+const POLL_MS = 90_000;
 
 const ICON: Record<NotificationItem['type'], React.ComponentType<{ className?: string }>> = {
   BOOKING: BookMarked,

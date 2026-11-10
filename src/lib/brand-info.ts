@@ -34,12 +34,13 @@ export interface BrandInfo {
 }
 
 export const BRAND_DEFAULTS: BrandInfo = {
-  siteName: 'Abdul Razak Catering Service — Wedding & Event Caterers in Karachi',
-  name: 'Abdul Razak Catering Service',
-  // Must be the tail of `name`: the print letterhead drops the tagline from
-  // the big wordmark line when it is (see `wordmark` in print-docs.tsx), so
-  // the slip reads "Abdul Razak" large with this underneath.
-  tagline: 'Catering Service',
+  siteName: 'Abdul Razzak Catering — Wedding & Event Caterers in Karachi',
+  name: 'Abdul Razzak Catering',
+  // Deliberately EMPTY. The house name is three words on one line — on screen,
+  // on the letterhead and in the app icon — with nothing set underneath it.
+  // Every place that prints a tagline omits the line entirely when this is
+  // blank, which is the intended look.
+  tagline: '',
   // Contact details are DELIBERATELY blank.
   //
   // Every one of them is a real, dialable number or a real address the moment
@@ -81,7 +82,7 @@ export const BRAND_FIELDS: {
 }[] = [
   { key: 'siteName', label: 'Website title', hint: 'Shown in the browser tab and by Google' },
   { key: 'name', label: 'Business name', hint: 'Shown on the website and in the footer' },
-  { key: 'tagline', label: 'Tagline', hint: 'The small word under the logo' },
+  { key: 'tagline', label: 'Tagline', hint: 'Optional small line under the logo — leave blank to show the name alone' },
   { key: 'phone', label: 'Phone', hint: 'Main line — the website’s call button dials this' },
   { key: 'footerPhone', label: 'Slip phone', hint: 'Printed in the footer band of every quotation and report' },
   { key: 'email', label: 'Email' },

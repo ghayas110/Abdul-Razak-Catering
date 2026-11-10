@@ -17,7 +17,7 @@ export function SiteFooter({ brand }: { brand: BrandInfo }) {
       <div className="mx-auto max-w-[1200px] px-4 py-12 sm:px-6">
         <div className="flex flex-col gap-10 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <BrandLockup name="Abdul Razak" sub="Catering Service" />
+            <BrandLockup name="Abdul Razzak Catering" />
             <p className="mt-4 max-w-[36ch] text-sm leading-relaxed text-[rgb(var(--text-dim))]">
               Wedding and event catering in {brand.city || 'Karachi'}.
             </p>

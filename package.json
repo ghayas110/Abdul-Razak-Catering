@@ -12,7 +12,8 @@
     "db:seed": "tsx scripts/seed.ts",
     "db:reset": "tsx scripts/migrate.ts --reset && tsx scripts/seed.ts",
     "icons": "node scripts/gen-icons.mjs",
-    "build:next": "next build"
+    "build:next": "next build",
+    "photos": "node scripts/optimize-photos.mjs"
   },
   "dependencies": {
     "bcryptjs": "2.4.3",

@@ -4,35 +4,14 @@ import logoMark from '../../public/logo-mark.png';
 import logoLockup from '../../public/logo.png';
 
 /**
- * Abdul Razak Catering Service identity.
+ * Abdul Razzak Catering identity.
  *
- * The mark is a abdulrazak seen from below: an octagonal glass roof with eight
- * mullions running out to the frame and a burst of light at the centre. It is
- * drawn as pure vector (no image asset) so it stays crisp in the sidebar, on
- * the printed slip and inside the generated PWA icons, which are rasterised
- * from this same geometry by `scripts/gen-icons.mjs`.
+ * The mark is the client's own ARC roundel: the monogram under a serving dome,
+ * a gloved hand beneath it, inside a gold ring. It is the artwork the business
+ * already trades under, so it is used as supplied rather than redrawn — the
+ * sidebar, the printed slip and the PWA icons are all rasterised from that one
+ * file (assets/arc-mark.png) by `scripts/gen-icons.mjs`.
  */
-
-/** Light-ray divider used above/below the wordmark. */
-function Rays({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 240 24" className={className} aria-hidden fill="none">
-      {/* centre gem — the light source */}
-      <path d="M120 5 l4.5 7 -4.5 7 -4.5 -7 z" fill="currentColor" />
-      {/* tapering beams */}
-      <rect x="60" y="11.2" width="48" height="1.6" rx="0.8" fill="currentColor" />
-      <rect x="132" y="11.2" width="48" height="1.6" rx="0.8" fill="currentColor" />
-      {/* secondary rays, fanning out */}
-      <path d="M108 12 l-14 -4.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" opacity="0.6" />
-      <path d="M108 12 l-14 4.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" opacity="0.6" />
-      <path d="M132 12 l14 -4.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" opacity="0.6" />
-      <path d="M132 12 l14 4.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" opacity="0.6" />
-      {/* end taper */}
-      <path d="M60 12 h-22" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" opacity="0.45" />
-      <path d="M180 12 h22" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" opacity="0.45" />
-    </svg>
-  );
-}
 
 /**
  * The house monogram, in the sidebar and anywhere the lockup is too wide.
@@ -74,7 +53,7 @@ export function BrandLogo({ size = 'md', className }: { size?: 'sm' | 'md' | 'lg
   return (
     <Image
       src={logoLockup}
-      alt="Abdul Razak Catering Service"
+      alt="Abdul Razzak Catering"
       placeholder="empty"
       priority
       className={cn('mx-auto w-auto object-contain', h, className)}
@@ -83,22 +62,37 @@ export function BrandLogo({ size = 'md', className }: { size?: 'sm' | 'md' | 'lg
   );
 }
 
-export function BrandLockup({
-  compact,
-  name,
-  sub,
-}: { compact?: boolean; name?: string; sub?: string }) {
-  // Written as fallbacks rather than default parameters so an explicit
+/**
+ * The mark with the house name beside it, on ONE line.
+ *
+ * There is deliberately no second line: the name is three words and is set as
+ * three words everywhere it appears — sidebar, site header, footer, printed
+ * letterhead. An earlier version split it into a wordmark plus a "Catering
+ * Service" tagline underneath, which is exactly the look this replaced.
+ */
+export function BrandLockup({ compact, name, size = 'md' }: {
+  compact?: boolean;
+  name?: string;
+  /**
+   * `sm` in the sidebar, where the name shares its row with the notification
+   * bell. At the full size the three words either wrap or run under the bell,
+   * and the sidebar is widened to 288px to give even this size room to
+   * breathe — measured, not guessed: 142px of text in 158px of space.
+   */
+  size?: 'sm' | 'md';
+}) {
+  // Written as a fallback rather than a default parameter so an explicit
   // `undefined` from a caller still lands on the house wordmark.
-  const line1 = name ?? 'Abdul Razak';
-  const line2 = sub ?? 'Catering Service';
+  const line = name ?? 'Abdul Razzak Catering';
   return (
     <div className="flex items-center gap-2.5">
       <BrandMark />
       {!compact && (
-        <div className="leading-tight">
-          <div className="font-display text-lg text-gold-gradient">{line1}</div>
-          <div className="whitespace-nowrap text-[9px] uppercase tracking-[0.18em] text-[rgb(var(--text-dim))]">{line2}</div>
+        <div className={cn(
+          'font-display leading-tight text-gold-gradient whitespace-nowrap',
+          size === 'sm' ? 'text-[14px]' : 'text-lg',
+        )}>
+          {line}
         </div>
       )}
     </div>

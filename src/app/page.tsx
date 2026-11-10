@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { iconPath } from '@/lib/icons';
 import { getBrand } from '@/lib/data';
 import { siteUrl } from '@/lib/site-url';
 import { SiteNav } from '@/components/site/site-nav';
@@ -20,7 +21,19 @@ import { SiteFooter } from '@/components/site/site-footer';
  * it down. The four sections below are client leaves because each of them
  * animates; the composition itself renders on the server.
  */
-export const dynamic = 'force-dynamic';
+/**
+ * Rendered once an hour, not once per visitor.
+ *
+ * This page is the public shopfront: it is crawled by search engines and bots
+ * far more often than it is read by people, and every one of those hits used
+ * to run a full server render plus database reads. That is what an "excessive
+ * CPU" suspension on shared hosting is usually made of.
+ *
+ * Nothing here is per-visitor — it is the same four sections for everyone — so
+ * it is served from a cached render and rebuilt in the background every hour.
+ * Saving the business profile revalidates it immediately (see actions/brand).
+ */
+export const revalidate = 3600;
 
 export async function generateMetadata(): Promise<Metadata> {
   const brand = await getBrand();
@@ -37,7 +50,7 @@ export async function generateMetadata(): Promise<Metadata> {
       description,
       type: 'website',
       url: siteUrl(),
-      images: [{ url: '/icons/icon-512.png', width: 512, height: 512, alt: brand.name }],
+      images: [{ url: iconPath('icon-512.png'), width: 512, height: 512, alt: brand.name }],
     },
   };
 }

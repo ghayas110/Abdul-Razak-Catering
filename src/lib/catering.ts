@@ -5,17 +5,20 @@
  * invoices raised from them, the vendors those events are bought from, and the
  * ledger and reports that fall out of the two.
  */
-import { query, queryOne } from '@/lib/db';
+import { query, queryOne, toInt } from '@/lib/db';
 import { monthRange, monthLabel } from '@/lib/format';
 import {
   CATERING_BILLABLE, CATERING_PROFILE_DEFAULTS,
-  type CateringCategoryRow, type CateringCustomerRow, type CateringLineRow,
+  type CateringCustomerRow, type CateringLineRow,
   type CateringMenuItemRow,
   type BillFilter, type CateringBillRow,
   type CateringDocType, type CateringEventLedger, type CateringPayableRow,
   type CateringPaymentRow, type CateringProfile, type CateringQuotationRow,
   type CateringRuleRow, type CateringTemplateRow, type CateringVendorRow,
-  type CateringStatus,
+  type CateringStatus, type CateringReceivableRow, type CateringExpenseRow,
+  type CateringReceivableStatus, type CateringReceivablePaymentRow,
+  type CateringExpenseStatus, type CateringExpensePaymentRow,
+  type CateringCustomBillRow, type CateringCustomBillItemRow,
 } from '@/lib/types';
 
 const num = (v: unknown) => Number(v ?? 0);
@@ -33,15 +36,19 @@ export async function getCateringProfile(): Promise<CateringProfile> {
     "SELECT `key`, `value` FROM settings WHERE `key` LIKE 'catering.%'",
   );
   const map = new Map(rows.map((r) => [r.key.replace(/^catering\./, ''), r.value]));
-  const KEY: Partial<Record<keyof CateringProfile, string>> = { quotaPrefix: 'quota_prefix', taxNote: 'tax_note' };
-  const pick = (k: keyof CateringProfile) => map.get(KEY[k] ?? k) ?? CATERING_PROFILE_DEFAULTS[k];
+  const KEY: Partial<Record<keyof CateringProfile, string>> = {
+    quotaPrefix: 'quota_prefix', taxNote: 'tax_note', showTerms: 'show_terms',
+  };
+  const pick = (k: keyof CateringProfile) => map.get(KEY[k] ?? k) ?? String(CATERING_PROFILE_DEFAULTS[k]);
   return {
     name: pick('name'),
     person: pick('person'),
     phone: pick('phone'),
     address: pick('address'),
-    terms: pick('terms'),
-    note: pick('note'),
+    // Stored as '1'/'0'. Anything else — including the key never having been
+    // saved — reads as off, which is the safe direction: a slip that omits
+    // conditions is a smaller problem than one that prints the wrong ones.
+    showTerms: pick('showTerms') === '1' || pick('showTerms') === 'true',
     taxNote: pick('taxNote'),
     quotaPrefix: pick('quotaPrefix'),
   };
@@ -89,47 +96,10 @@ export async function getCateringMenu(activeOnly = false): Promise<CateringMenuI
       ${activeOnly ? 'WHERE m.is_active = 1' : ''}
       ORDER BY m.is_active DESC, m.sort_order, m.name`,
   );
-  if (rows.length === 0) return [];
-
-  // Variants in one round trip rather than a query per dish.
-  const ids = rows.map((r: any) => Number(r.id));
-  const vRows = await query<any>(
-    `SELECT v.menu_item_id, v.category_id, v.rate, c.name AS category_name
-       FROM catering_menu_item_categories v
-       JOIN catering_categories c ON c.id = v.category_id
-      WHERE v.menu_item_id IN (${ids.map(() => '?').join(',')}) AND v.is_active = 1
-      ORDER BY c.sort_order, c.name`,
-    ids,
-  );
-
-  const byItem = new Map<number, CateringMenuItemRow['variants']>();
-  for (const v of vRows) {
-    const k = Number(v.menu_item_id);
-    if (!byItem.has(k)) byItem.set(k, []);
-    byItem.get(k)!.push({
-      categoryId: Number(v.category_id), categoryName: v.category_name, rate: num(v.rate),
-    });
-  }
-
   return rows.map((r: any) => ({
     id: Number(r.id), name: r.name, unit: r.unit,
-    defaultRate: num(r.default_rate), sortOrder: Number(r.sort_order ?? 0),
+    rate: num(r.rate), sortOrder: Number(r.sort_order ?? 0),
     isActive: r.is_active ? 1 : 0, usedCount: Number(r.used_count ?? 0),
-    variants: byItem.get(Number(r.id)) ?? [],
-  }));
-}
-
-/** Managed categories — BEEF, CHICKEN, BAR B Q … */
-export async function getCateringCategories(activeOnly = false): Promise<CateringCategoryRow[]> {
-  const rows = await query<any>(
-    `SELECT c.*, (SELECT COUNT(*) FROM catering_menu_item_categories v WHERE v.category_id = c.id) AS item_count
-       FROM catering_categories c
-      ${activeOnly ? 'WHERE c.is_active = 1' : ''}
-      ORDER BY c.is_active DESC, c.sort_order, c.name`,
-  );
-  return rows.map((r) => ({
-    id: Number(r.id), name: r.name, sortOrder: Number(r.sort_order ?? 0),
-    isActive: r.is_active ? 1 : 0, itemCount: Number(r.item_count ?? 0),
   }));
 }
 
@@ -218,8 +188,7 @@ export async function getCateringLines(quotationId: number): Promise<CateringLin
   return rows.map((r) => ({
     id: Number(r.id), quotationId: Number(r.quotation_id), section: r.section,
     menuItemId: r.menu_item_id === null ? null : Number(r.menu_item_id),
-    description: r.description, category: r.category ?? '',
-    categoryId: r.category_id === null || r.category_id === undefined ? null : Number(r.category_id),
+    description: r.description,
     qty: num(r.qty), unit: r.unit, rate: num(r.rate), amount: num(r.amount),
     sortOrder: Number(r.sort_order ?? 0),
   }));
@@ -238,6 +207,212 @@ export async function getCateringPayments(quotationId: number): Promise<Catering
     receivedBy: r.received_by === null ? null : Number(r.received_by),
     receivedByName: r.received_by_name ?? null, note: r.note ?? null,
   }));
+}
+
+// ── Receivables & expenses ──────────────────────────────
+// Money that moves without a quotation behind it: a loan repaid, a gift, a
+// utility bill. Both tables are flat and unscoped from the event system on
+// purpose — forcing every rupee through a quotation or a vendor bill would
+// mean the ones that genuinely don't belong to either have nowhere to go.
+
+/** Receivables logged in a window, newest first. Every one when `from`/`to` are omitted. */
+export async function getCateringReceivables(from?: string, to?: string): Promise<CateringReceivableRow[]> {
+  const where = from && to ? 'WHERE r.received_date BETWEEN ? AND ?' : '';
+  const params = from && to ? [from, to] : [];
+  const rows = await query<any>(
+    `SELECT r.*, u.name AS created_by_name
+       FROM catering_receivables r LEFT JOIN users u ON u.id = r.created_by
+       ${where}
+      ORDER BY r.received_date DESC, r.id DESC`,
+    params,
+  );
+  return rows.map((r) => {
+    const amount = num(r.amount);
+    const paid = num(r.paid_amount);
+    return {
+      id: Number(r.id), payerName: r.payer_name, amount, paidAmount: paid,
+      balance: Math.max(0, amount - paid),
+      receivedDate: r.received_date, status: r.status as CateringReceivableStatus,
+      note: r.note ?? '',
+      createdBy: r.created_by === null ? null : Number(r.created_by),
+      createdByName: r.created_by_name ?? null, createdAt: r.created_at,
+    };
+  });
+}
+
+/**
+ * Actual cash collected against receivables in a window (or all-time when
+ * `from`/`to` are omitted) — summed from the PAYMENT ledger, not from the
+ * invoiced `amount`. A 50,000 receivable with nothing paid against it
+ * contributes 0 here, which is exactly what the Reports profit figure and
+ * the printed catering report want: an unpaid promise is not revenue.
+ */
+export async function getCateringReceivablesTotal(from?: string, to?: string): Promise<number> {
+  const where = from && to ? 'WHERE payment_date BETWEEN ? AND ?' : '';
+  const params = from && to ? [from, to] : [];
+  const row = await queryOne<{ total: number | string }>(
+    `SELECT COALESCE(SUM(amount), 0) AS total FROM catering_receivable_payments ${where}`, params,
+  );
+  return num(row?.total);
+}
+
+/**
+ * What is still owed across every open receivable, right now. Unscoped by
+ * date on purpose — a debt someone owes doesn't belong to the month it was
+ * logged in, it's a running balance until it's settled.
+ */
+export async function getCateringReceivablesOutstanding(): Promise<number> {
+  const row = await queryOne<{ total: number | string }>(
+    `SELECT COALESCE(SUM(amount - paid_amount), 0) AS total
+       FROM catering_receivables WHERE status IN ('PENDING','PARTIAL')`,
+  );
+  return num(row?.total);
+}
+
+/** The installment history for one receivable, newest first. */
+export async function getCateringReceivablePayments(receivableId: number): Promise<CateringReceivablePaymentRow[]> {
+  const rows = await query<any>(
+    `SELECT p.*, u.name AS received_by_name
+       FROM catering_receivable_payments p LEFT JOIN users u ON u.id = p.received_by
+      WHERE p.receivable_id = ? ORDER BY p.payment_date DESC, p.id DESC`,
+    [receivableId],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id), receivableId: Number(r.receivable_id), amount: num(r.amount),
+    paymentDate: r.payment_date, method: r.method,
+    note: r.note ?? null, receivedBy: r.received_by === null ? null : Number(r.received_by),
+    receivedByName: r.received_by_name ?? null,
+  }));
+}
+
+/** Payables raised in a window, newest first. Every one when `from`/`to` are omitted. */
+export async function getCateringExpenses(from?: string, to?: string): Promise<CateringExpenseRow[]> {
+  const where = from && to ? 'WHERE e.expense_date BETWEEN ? AND ?' : '';
+  const params = from && to ? [from, to] : [];
+  const rows = await query<any>(
+    `SELECT e.*, u.name AS created_by_name
+       FROM catering_expenses e LEFT JOIN users u ON u.id = e.created_by
+       ${where}
+      ORDER BY e.expense_date DESC, e.id DESC`,
+    params,
+  );
+  return rows.map((r) => {
+    const amount = num(r.amount);
+    const paid = num(r.paid_amount);
+    return {
+      id: Number(r.id), category: r.category ?? '', payee: r.payee ?? '', amount, paidAmount: paid,
+      balance: Math.max(0, amount - paid), status: r.status as CateringExpenseStatus,
+      expenseDate: r.expense_date, note: r.note ?? '',
+      createdBy: r.created_by === null ? null : Number(r.created_by),
+      createdByName: r.created_by_name ?? null, createdAt: r.created_at,
+    };
+  });
+}
+
+/**
+ * Actual cash paid out in a window (or all-time when `from`/`to` are
+ * omitted) — summed from the PAYMENT ledger, not the invoiced `amount`. A
+ * 20,000 bill with nothing paid against it contributes 0 here, matching how
+ * `getCateringReceivablesTotal` treats an unpaid receivable.
+ */
+export async function getCateringExpensesTotal(from?: string, to?: string): Promise<number> {
+  const where = from && to ? 'WHERE payment_date BETWEEN ? AND ?' : '';
+  const params = from && to ? [from, to] : [];
+  const row = await queryOne<{ total: number | string }>(
+    `SELECT COALESCE(SUM(amount), 0) AS total FROM catering_payable_payments ${where}`, params,
+  );
+  return num(row?.total);
+}
+
+/** What the business still owes across every open payable, right now. Unscoped by date. */
+export async function getCateringExpensesOutstanding(): Promise<number> {
+  const row = await queryOne<{ total: number | string }>(
+    `SELECT COALESCE(SUM(amount - paid_amount), 0) AS total
+       FROM catering_expenses WHERE status IN ('PENDING','PARTIAL')`,
+  );
+  return num(row?.total);
+}
+
+/** The installment history for one payable, newest first. */
+export async function getCateringExpensePayments(payableId: number): Promise<CateringExpensePaymentRow[]> {
+  const rows = await query<any>(
+    `SELECT p.*, u.name AS paid_by_name
+       FROM catering_payable_payments p LEFT JOIN users u ON u.id = p.paid_by
+      WHERE p.payable_id = ? ORDER BY p.payment_date DESC, p.id DESC`,
+    [payableId],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id), payableId: Number(r.payable_id), amount: num(r.amount),
+    paymentDate: r.payment_date, method: r.method,
+    note: r.note ?? null, paidBy: r.paid_by === null ? null : Number(r.paid_by),
+    paidByName: r.paid_by_name ?? null,
+  }));
+}
+
+// ── Custom bills ─────────────────────────────────────────
+// A bill with no dish behind it: freeform charge lines, no menu, no customer
+// record required. See the note on catering_custom_bills.
+
+export interface CateringCustomBillListOpts {
+  search?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export async function getCateringCustomBills(opts: CateringCustomBillListOpts = {}): Promise<CateringCustomBillRow[]> {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (opts.search) {
+    where.push('(b.bill_no LIKE ? OR b.bill_to LIKE ? OR b.contact_no LIKE ?)');
+    const s = `%${opts.search}%`;
+    params.push(s, s, s);
+  }
+  if (opts.from) { where.push('b.bill_date >= ?'); params.push(opts.from); }
+  if (opts.to) { where.push('b.bill_date <= ?'); params.push(opts.to); }
+  const limit = toInt(opts.limit, 200);
+
+  const rows = await query<any>(
+    `SELECT b.*, u.name AS created_by_name
+       FROM catering_custom_bills b LEFT JOIN users u ON u.id = b.created_by
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY b.bill_date DESC, b.id DESC
+      LIMIT ${limit}`,
+    params,
+  );
+  return rows.map(mapCustomBill);
+}
+
+export async function getCateringCustomBill(id: number): Promise<CateringCustomBillRow | null> {
+  const row = await queryOne<any>(
+    `SELECT b.*, u.name AS created_by_name
+       FROM catering_custom_bills b LEFT JOIN users u ON u.id = b.created_by
+      WHERE b.id = ?`,
+    [id],
+  );
+  if (!row) return null;
+  const items = await query<any>(
+    `SELECT * FROM catering_custom_bill_items WHERE bill_id = ? ORDER BY sort_order, id`,
+    [id],
+  );
+  return {
+    ...mapCustomBill(row),
+    items: items.map((it): CateringCustomBillItemRow => ({
+      id: Number(it.id), billId: Number(it.bill_id),
+      section: it.section === 'CHARGE' ? 'CHARGE' : 'DISH', description: it.description,
+      qty: num(it.qty), unit: it.unit,
+      rate: num(it.rate), amount: num(it.amount), sortOrder: Number(it.sort_order ?? 0),
+    })),
+  };
+}
+
+function mapCustomBill(r: any): CateringCustomBillRow {
+  return {
+    id: Number(r.id), billNo: r.bill_no, billTo: r.bill_to ?? '', contactNo: r.contact_no ?? '',
+    address: r.address ?? '', billDate: r.bill_date, grandTotal: num(r.grand_total), note: r.note ?? '',
+    createdBy: r.created_by === null ? null : Number(r.created_by),
+    createdByName: r.created_by_name ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
 }
 
 // ── Financials ─────────────────────────────────────────
@@ -302,20 +477,19 @@ export async function getCateringTrend(year: number, month: number, months = 6) 
 export async function getCateringDishMix(from: string, to: string, limit = 15) {
   const n = Math.max(1, Math.min(100, Math.trunc(limit) || 15));
   const rows = await query<any>(
-    `SELECT i.description, i.category, SUM(i.qty) AS qty, SUM(i.amount) AS revenue,
+    `SELECT i.description, SUM(i.qty) AS qty, SUM(i.amount) AS revenue,
             COUNT(DISTINCT q.id) AS orders
        FROM catering_quotation_items i
        JOIN catering_quotations q ON q.id = i.quotation_id
       WHERE q.status IN (${BILLABLE_SQL}) AND q.delivery_date BETWEEN ? AND ?
         AND i.section = 'DISH'
-      GROUP BY i.description, i.category
+      GROUP BY i.description
       ORDER BY revenue DESC
       LIMIT ${n}`,
     [from, to],
   );
   return rows.map((r) => ({
     description: r.description as string,
-    category: (r.category ?? '') as string,
     qty: num(r.qty),
     revenue: num(r.revenue),
     orders: Number(r.orders ?? 0),
@@ -659,8 +833,6 @@ export async function getTemplateLines(templateId: number): Promise<CateringLine
     section: r.section,
     menuItemId: r.menu_item_id === null ? null : Number(r.menu_item_id),
     description: r.description,
-    category: r.category ?? '',
-    categoryId: r.category_id === null || r.category_id === undefined ? null : Number(r.category_id),
     qty: num(r.qty), unit: r.unit, rate: num(r.rate), amount: num(r.amount),
     sortOrder: Number(r.sort_order ?? 0),
   }));

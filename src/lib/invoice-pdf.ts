@@ -79,10 +79,17 @@ export async function buildInvoicePdf(bookingId: number, printPath?: string): Pr
     const doc = frame.contentDocument;
     if (!doc) throw new Error('Could not read the invoice.');
 
-    // The on-screen preview applies a zoom transform; capturing through it
-    // would bake the zoom into the PDF.
+    // The on-screen preview scales itself to fit the reader's screen, and the
+    // iframe this renders in is only 900px wide — narrow enough that the
+    // fit-to-width pass shrinks the sheet. Capturing through that would bake a
+    // reduced page into the PDF, so both scaling mechanisms are cleared first.
+    // (`zoom` is what does the scaling now; `transform` is cleared too so an
+    // older cached build of the print route cannot reintroduce the bug.)
     const wrap = doc.querySelector<HTMLElement>('.rgb-zoom-wrap');
-    if (wrap) wrap.style.transform = 'none';
+    if (wrap) {
+      wrap.style.zoom = '1';
+      wrap.style.transform = 'none';
+    }
 
     const sheets = Array.from(doc.querySelectorAll<HTMLElement>('.rgb-sheet'));
     if (sheets.length === 0) throw new Error('The invoice has nothing to print.');

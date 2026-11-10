@@ -66,12 +66,39 @@ export function DateInput({
         {/* Real picker, kept for convenience. Visually it's just the icon. */}
         <button
           type="button"
-          onClick={() => pickerRef.current?.showPicker?.() ?? pickerRef.current?.click()}
+          onClick={() => {
+            const el = pickerRef.current;
+            if (!el) return;
+            // showPicker() throws if the browser will not open a picker for
+            // this element (no user activation, element not rendered). There
+            // is nothing useful to do about that, and letting it escape would
+            // break the click handler, so it is swallowed. NOT written as
+            // `showPicker?.() ?? click()`: showPicker returns undefined on
+            // SUCCESS, so that form always ran the fallback click as well.
+            try { el.showPicker(); } catch { /* no picker available */ }
+          }}
           aria-label="Open calendar"
           className="absolute inset-y-0 right-0 flex items-center px-3 text-[rgb(var(--text-dim))] hover:text-gold"
         >
           <Calendar className="h-4 w-4" />
         </button>
+        {/*
+         * The real date field, invisible, laid exactly over the icon.
+         *
+         * On a touch device this IS the tap target (see .date-native-overlay
+         * in globals.css) because iOS cannot be driven from the button above:
+         * Safari before 16 has no showPicker() at all, WebKit rejects it on an
+         * element it does not consider rendered, and — unlike Chrome — it
+         * ignores a synthetic .click() on a date input outright. The result
+         * was an icon that did nothing on iPhone while working on Android.
+         * Tapping the actual control is the one thing every mobile browser
+         * honours.
+         *
+         * It stays click-through on desktop, where a mouse click landing on a
+         * date input does NOT reliably open Chrome's dropdown — only its own
+         * calendar indicator does — so the button and showPicker() above
+         * remain in charge there.
+         */}
         <input
           ref={pickerRef}
           type="date"
@@ -79,7 +106,7 @@ export function DateInput({
           onChange={(e) => onChange(e.target.value)}
           tabIndex={-1}
           aria-hidden
-          className="pointer-events-none absolute right-2 bottom-0 h-0 w-0 opacity-0"
+          className="date-native-overlay absolute inset-y-0 right-0 w-12 opacity-0"
         />
       </div>
 

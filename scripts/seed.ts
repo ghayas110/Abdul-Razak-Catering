@@ -119,7 +119,7 @@ async function main() {
     `INSERT INTO users (name, email, password_hash, role, permissions, is_active) VALUES ?`,
     [[
       ['Super Admin', 'admin@abdulrazakcatering.com',  hash(SEED_PASSWORD), 'SUPER_ADMIN', null, 1],
-      ['Abdul Razak', 'owner@abdulrazakcatering.com',  hash(SEED_PASSWORD), 'OWNER',       null, 1],
+      ['Abdul Razzak', 'owner@abdulrazakcatering.com',  hash(SEED_PASSWORD), 'OWNER',       null, 1],
       ['Office',      'office@abdulrazakcatering.com', hash(SEED_PASSWORD), 'MANAGER',     null, 1],
     ]],
   );

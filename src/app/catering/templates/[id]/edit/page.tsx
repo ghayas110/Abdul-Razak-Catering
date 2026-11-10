@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { requirePermission } from '@/lib/session';
-import { getCateringTemplate, getCateringMenu, getCateringCustomers, getCateringCategories } from '@/lib/catering';
+import { getCateringTemplate, getCateringMenu, getCateringCustomers } from '@/lib/catering';
 import { QuotationEditor } from '../../../quotations/quotation-editor';
 
 export const metadata = { title: 'Edit Template — Catering' };
@@ -9,9 +9,9 @@ export const dynamic = 'force-dynamic';
 export default async function EditCateringTemplate({ params }: { params: Promise<{ id: string }> }) {
   await requirePermission('catering.manage');
   const { id } = await params;
-  const [template, menu, customers, categories] = await Promise.all([
+  const [template, menu, customers] = await Promise.all([
     getCateringTemplate(Number(id)),
-    getCateringMenu(true), getCateringCustomers(), getCateringCategories(false),
+    getCateringMenu(true), getCateringCustomers(),
   ]);
   if (!template) notFound();
   return (
@@ -20,7 +20,6 @@ export default async function EditCateringTemplate({ params }: { params: Promise
       template={template}
       menu={menu}
       customers={customers.map((c) => ({ id: c.id, name: c.name, phone: c.phone }))}
-      categories={categories}
     />
   );
 }

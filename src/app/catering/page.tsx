@@ -110,7 +110,7 @@ export default async function CateringDashboard({
                 </thead>
                 <tbody>
                   {mix.map((m) => (
-                    <tr key={`${m.description}-${m.category}`} className="border-b border-[rgb(var(--border)/0.3)] last:border-0">
+                    <tr key={m.description} className="border-b border-[rgb(var(--border)/0.3)] last:border-0">
                       <td className="py-2.5 pr-3">
                         <div className="text-[rgb(var(--text))]">{m.description}</div>
                         <div className="mt-1 h-1 w-full max-w-[150px] overflow-hidden rounded-full bg-[rgb(var(--surface-2))]">

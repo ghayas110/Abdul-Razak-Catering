@@ -14,15 +14,14 @@ export default async function CateringLayout({ children }: { children: React.Rea
   const user = await requirePermission('catering.view');
   const profile = await getCateringProfile();
 
-  // The sidebar wears the trading name from Settings, not a hardcoded one.
-  const [first, ...rest] = profile.name.split(' ');
+  // The sidebar wears the trading name from Settings, not a hardcoded one —
+  // whole, on one line, exactly as it is written everywhere else.
   return (
     <AppShell
       user={user}
       nav={CATERING_NAV}
       homeHref="/catering"
-      brandName={first || 'Catering'}
-      brandSub={(rest.join(' ') || 'Catering').toUpperCase()}
+      brandName={profile.name || 'Catering'}
     >
       {children}
     </AppShell>

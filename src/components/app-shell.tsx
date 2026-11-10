@@ -28,14 +28,12 @@ export function AppShell({
   nav = CATERING_NAV,
   homeHref = '/catering',
   brandName,
-  brandSub,
 }: {
   user: { id: number; name?: string | null; email?: string | null; role: Role; permissions: Permission[] };
   children: React.ReactNode;
   nav?: NavItem[];
   homeHref?: string;
   brandName?: string;
-  brandSub?: string;
 }) {
   const pathname = usePathname();
   const { theme, toggle } = useTheme();
@@ -49,9 +47,9 @@ export function AppShell({
   return (
     <div className="min-h-screen">
       {/* ── Desktop sidebar ── */}
-      <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-[rgb(var(--border)/0.5)] bg-[rgb(var(--surface)/0.6)] backdrop-blur-xl lg:flex">
+      <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-[rgb(var(--border)/0.5)] bg-[rgb(var(--surface)/0.6)] backdrop-blur-xl lg:flex">
         <div className="flex items-center justify-between px-5 py-6">
-          <BrandLockup name={brandName} sub={brandSub} />
+          <BrandLockup name={brandName} size="sm" />
           <NotificationBell align="left" />
         </div>
         <nav className="flex-1 space-y-1 px-3 overflow-y-auto">
@@ -78,7 +76,7 @@ export function AppShell({
 
       {/* ── Mobile top bar ── */}
       <header className="no-print safe-t sticky top-0 z-30 flex items-center justify-between border-b border-[rgb(var(--border)/0.5)] bg-[rgb(var(--surface)/0.85)] px-4 pb-3 backdrop-blur-xl lg:hidden">
-        <BrandLockup compact name={brandName} sub={brandSub} />
+        <BrandLockup compact name={brandName} />
         <div className="flex items-center gap-2">
           <NotificationBell />
           <button onClick={toggle} className="rounded-lg p-2 text-[rgb(var(--text-muted))] hover:bg-[rgb(var(--surface-2))]" aria-label="Toggle theme">
@@ -122,7 +120,7 @@ export function AppShell({
       </AnimatePresence>
 
       {/* ── Main ── */}
-      <main className="lg:pl-64">
+      <main className="lg:pl-72">
         <div className="mx-auto max-w-[1400px] px-4 py-6 pb-24 md:px-8 lg:pb-8">{children}</div>
       </main>
 

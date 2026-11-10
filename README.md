@@ -1,4 +1,4 @@
-# Abdul Razak Catering Service
+# Abdul Razzak Catering
 
 The public website and the staff portal behind it, in one Next.js app.
 

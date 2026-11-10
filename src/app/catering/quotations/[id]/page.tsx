@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { requirePermission } from '@/lib/session';
 import { notFound } from 'next/navigation';
-import { getCateringQuotation, getCateringPayments, getCateringProfile } from '@/lib/catering';
+import { getCateringQuotation, getCateringPayments, getCateringProfile, getCateringRules } from '@/lib/catering';
 import { cateringQuotationText } from '@/lib/whatsapp';
 import { fmtMoney, fmtDate } from '@/lib/format';
 import { Card, SectionTitle, Button, Badge, TableScroll, FadeUp } from '@/components/ui';
@@ -19,7 +19,9 @@ export default async function CateringQuotationDetail({ params }: { params: Prom
   const { id } = await params;
   const q = await getCateringQuotation(Number(id));
   if (!q) notFound();
-  const [payments, profile] = await Promise.all([getCateringPayments(q.id), getCateringProfile()]);
+  const [payments, profile, rules] = await Promise.all([
+    getCateringPayments(q.id), getCateringProfile(), getCateringRules(true),
+  ]);
   // Built here, from the same figures the slip prints, so the message and the
   // PDF can never tell different stories.
   const message = cateringQuotationText(
@@ -29,7 +31,12 @@ export default async function CateringQuotationDetail({ params }: { params: Prom
       itemsTotal: q.itemsTotal,
       grandTotal: q.grandTotal, paidAmount: q.paidAmount,
     },
-    { name: profile.name, person: profile.person, phone: profile.phone, address: profile.address, terms: profile.terms },
+    // Same single source as the printed slip: the rules, and only when
+    // Settings has conditions switched on.
+    {
+      name: profile.name, person: profile.person, phone: profile.phone, address: profile.address,
+      terms: profile.showTerms ? rules.map((r) => r.text).join('\n') : '',
+    },
   );
   const canManage = user.permissions.includes('catering.manage') || user.role === 'SUPER_ADMIN';
 
@@ -38,11 +45,10 @@ export default async function CateringQuotationDetail({ params }: { params: Prom
 
   const band = (title: string, rows: typeof dishes, showCols: boolean) => rows.length > 0 && (
     <>
-      <tr><td colSpan={5} className="pt-4 pb-1 text-xs uppercase tracking-wider text-gold">{title}</td></tr>
+      <tr><td colSpan={4} className="pt-4 pb-1 text-xs uppercase tracking-wider text-gold">{title}</td></tr>
       {rows.map((l) => (
         <tr key={l.id} className="border-b border-[rgb(var(--border)/0.3)]">
           <td className="py-2 pr-3 text-[rgb(var(--text))]">{l.description}</td>
-          <td className="py-2 pr-3 text-[rgb(var(--text-dim))]">{showCols ? l.category : ''}</td>
           <td className="py-2 pr-3 text-right tnum text-[rgb(var(--text-muted))]">{showCols && l.qty ? `${l.qty} ${l.unit}` : ''}</td>
           <td className="py-2 pr-3 text-right tnum text-[rgb(var(--text-dim))]">{showCols && l.rate ? fmtMoney(l.rate, false) : ''}</td>
           <td className="py-2 text-right tnum text-[rgb(var(--text))]">{fmtMoney(l.amount, false)}</td>
@@ -106,15 +112,19 @@ export default async function CateringQuotationDetail({ params }: { params: Prom
         </div>
       </Card>
 
+      {/* `min-w-0` matters more than it looks: a grid item's default
+          `min-width: auto` refuses to shrink below its content, so the items
+          table (min-w-[480px]) stretched this card to 522px on a 375px phone
+          and the overflow was clipped by the viewport rather than scrolled by
+          TableScroll. The right-hand columns were unreachable. */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="p-5 lg:col-span-2">
+        <Card className="min-w-0 p-5 lg:col-span-2">
           <div className="mb-2 font-display text-lg text-[rgb(var(--text))]">Items</div>
           <TableScroll>
-            <table className="w-full min-w-[560px] text-sm">
+            <table className="w-full min-w-[480px] text-sm">
               <thead>
                 <tr className="border-b border-[rgb(var(--border)/0.6)] text-left text-xs uppercase tracking-wider text-[rgb(var(--text-dim))]">
                   <th className="py-2 pr-3 font-medium">Description</th>
-                  <th className="py-2 pr-3 font-medium">Category</th>
                   <th className="py-2 pr-3 text-right font-medium">Qty</th>
                   <th className="py-2 pr-3 text-right font-medium">Rate</th>
                   <th className="py-2 text-right font-medium">Amount</th>

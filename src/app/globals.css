@@ -299,3 +299,20 @@ body { overflow-x: clip; max-width: 100%; }
   }
 }
 .print-only { display: none; }
+
+/*
+ * DateInput's hidden native <input type="date">, laid over the calendar icon.
+ *
+ * Click-through by default: on a desktop browser the icon button drives the
+ * picker with showPicker(), and a stray click landing on the date input
+ * instead would do nothing.
+ *
+ * On a touch device the opposite is true — iOS opens its picker only when the
+ * real control is tapped, so there the overlay takes the tap. `hover: none`
+ * and `pointer: coarse` together mean "a finger, not a mouse", which is the
+ * actual condition here rather than a guess at the user agent.
+ */
+.date-native-overlay { pointer-events: none; }
+@media (hover: none) and (pointer: coarse) {
+  .date-native-overlay { pointer-events: auto; }
+}

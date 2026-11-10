@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, Button, Field, Input, Select, Modal } from '@/components/ui';
+import { Card, Button, Field, Input, Select, Modal, ConfirmModal } from '@/components/ui';
 import { InvoiceShareButton } from '@/components/invoice-share';
 import { WhatsAppMessageCard } from '@/components/whatsapp-message';
 import { cateringQuotationText } from '@/lib/whatsapp';
@@ -41,6 +41,14 @@ export function QuotationActions({
   const [method, setMethod] = useState('CASH');
   const [note, setNote] = useState('');
   const [err, setErr] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  function confirmDelete() {
+    start(async () => {
+      const res = await deleteCateringQuotation(quotationId);
+      if (res.ok) router.push('/catering/quotations'); else { setDeleteOpen(false); setMsg(res.error); }
+    });
+  }
 
   // Money can only be taken against a live quotation, matching the action.
   const billable = status === 'CONFIRMED' || status === 'COMPLETED';
@@ -112,13 +120,7 @@ export function QuotationActions({
                 </Button>
               )}
               <button
-                onClick={() => {
-                  if (!confirm(`Delete ${quotaNo}? Its lines and receipts go with it.`)) return;
-                  start(async () => {
-                    const res = await deleteCateringQuotation(quotationId);
-                    if (res.ok) router.push('/catering/quotations'); else setMsg(res.error);
-                  });
-                }}
+                onClick={() => setDeleteOpen(true)}
                 disabled={pending}
                 className="ml-auto rounded-lg p-2 text-[rgb(var(--text-dim))] hover:text-negative"
                 title="Delete quotation"
@@ -186,6 +188,15 @@ export function QuotationActions({
           </div>
         </div>
       </Modal>
+
+      <ConfirmModal
+        open={deleteOpen}
+        title="Delete this quotation?"
+        message={`Delete ${quotaNo}? Its lines and receipts go with it — this can't be undone.`}
+        pending={pending}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteOpen(false)}
+      />
     </>
   );
 }
